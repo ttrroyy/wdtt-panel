@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ildarmaga/wdtt/pkg/paneldb"
 	"github.com/ildarmaga/wdtt/pkg/vkhash"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -87,17 +88,17 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := loadServerStats()
 	db, _ := loadPasswords()
 	jsonOK(w, map[string]interface{}{
-		"wdtt_active":      serviceActive(wdttServiceUnit),
-		"xray_active":      serviceActive(xrayServiceUnit),
-		"wdtt_iface":       getWdttIface(),
-		"xray_version":     xrayVersion(),
-		"xray_binary":      xrayBinary(),
-		"stats":            stats,
-		"users_count":      len(db.Passwords),
-		"devices_count":    len(db.Devices),
-		"server_ip":          a.serverIP(),
-		"default_link_host":  a.defaultLinkHost(),
-		"panel_tls":          panelTLSEnabled(a.cfg),
+		"wdtt_active":       serviceActive(wdttServiceUnit),
+		"xray_active":       serviceActive(xrayServiceUnit),
+		"wdtt_iface":        getWdttIface(),
+		"xray_version":      xrayVersion(),
+		"xray_binary":       xrayBinary(),
+		"stats":             stats,
+		"users_count":       len(db.Passwords),
+		"devices_count":     len(db.Devices),
+		"server_ip":         a.serverIP(),
+		"default_link_host": a.defaultLinkHost(),
+		"panel_tls":         panelTLSEnabled(a.cfg),
 	})
 }
 
@@ -145,50 +146,70 @@ func (a *App) handleUsersList(w http.ResponseWriter, r *http.Request) {
 		dtlsPort, wgPort, clientPort := resolveUserPorts(entry, inbound)
 		normalizeEntryDevices(entry)
 		u := map[string]interface{}{
-			"password":           maskPassword(pass),
-			"password_key":       pass,
-			"device_id":          deviceIDsDisplay(entry),
-			"device_ids":         entry.DeviceIDs,
-			"devices_bound":      len(entry.DeviceIDs),
-			"max_devices":        entryMaxDevices(db, pass, entry),
-			"comment":            entry.Comment,
-			"expires_at":         entry.ExpiresAt,
-			"expires":            passwordExpiry(entry),
-			"up":                 formatBytes(entry.UpBytes),
-			"down":               formatBytes(entry.DownBytes),
-			"up_bytes":           entry.UpBytes,
-			"down_bytes":         entry.DownBytes,
-			"total_bytes":        entry.TotalBytes,
-			"total_gb":           bytesToGB(entry.TotalBytes),
-			"max_down_mbps":      entry.MaxDownMBps,
-			"max_up_mbps":        entry.MaxUpMBps,
-			"traffic_used":       used,
-			"traffic_used_fmt":   formatBytes(used),
-			"traffic_exceeded":   trafficExceeded(entry),
-			"active":             !entry.IsDeactivated && !isPasswordExpired(entry),
-			"online":             userOnlineFromStats(pass, deviceIDsDisplay(entry), false, stats),
-			"last_seen_at":       entry.LastSeenAt,
-			"ports":              entry.Ports,
-			"dtls_port":          dtlsPort,
-			"wg_port":            wgPort,
-			"client_port":        clientPort,
-			"link":               buildWdttLink(linkHost, pass, a.cfg.SubTitle, entry.VkHash, entry, inbound, a.buildSubURL(entry.SubID)),
-			"vk_hash":            entry.VkHash,
+			"password":         maskPassword(pass),
+			"password_key":     pass,
+			"device_id":        deviceIDsDisplay(entry),
+			"device_ids":       entry.DeviceIDs,
+			"devices_bound":    len(entry.DeviceIDs),
+			"max_devices":      entryMaxDevices(db, pass, entry),
+			"comment":          entry.Comment,
+			"expires_at":       entry.ExpiresAt,
+			"expires":          passwordExpiry(entry),
+			"up":               formatBytes(entry.UpBytes),
+			"down":             formatBytes(entry.DownBytes),
+			"up_bytes":         entry.UpBytes,
+			"down_bytes":       entry.DownBytes,
+			"total_bytes":      entry.TotalBytes,
+			"total_gb":         bytesToGB(entry.TotalBytes),
+			"max_down_mbps":    entry.MaxDownMBps,
+			"max_up_mbps":      entry.MaxUpMBps,
+			"traffic_used":     used,
+			"traffic_used_fmt": formatBytes(used),
+			"traffic_exceeded": trafficExceeded(entry),
+			"active":           !entry.IsDeactivated && !isPasswordExpired(entry),
+			"online":           userOnlineFromStats(pass, deviceIDsDisplay(entry), false, stats),
+			"last_seen_at":     entry.LastSeenAt,
+			"ports":            entry.Ports,
+			"dtls_port":        dtlsPort,
+			"wg_port":          wgPort,
+			"client_port":      clientPort,
+			"link":             buildWdttLink(linkHost, pass, a.cfg.SubTitle, entry.VkHash, entry, inbound, a.buildSubURL(entry.SubID)),
+			"vk_hash":          entry.VkHash,
 		}
 		a.enrichUserSub(u, entry)
 		users = append(users, u)
+	}
+	for _, u := range users {
+		id, _ := u["sub_id"].(string)
+		protocols, err := paneldb.UserProtocols(panelDB, id)
+		if err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+		u["inbounds"] = protocols
+		bundle, _ := loadProtocolSubscription(id)
+		u["connections"] = bundle.Connections
+		up, _ := u["up_bytes"].(int64)
+		down, _ := u["down_bytes"].(int64)
+		up += bundle.UpBytes
+		down += bundle.DownBytes
+		u["up_bytes"], u["down_bytes"] = up, down
+		u["up"], u["down"] = formatBytes(up), formatBytes(down)
+		u["traffic_used"], u["traffic_used_fmt"] = up+down, formatBytes(up+down)
+		u["route_tag"] = "vpn-user-" + id
 	}
 	sortUsersList(users)
 	devices := []map[string]interface{}{}
 	for id, dev := range db.Devices {
 		devices = append(devices, map[string]interface{}{
 			"device_id": id,
-			"ip": dev.IP,
+			"ip":        dev.IP,
 		})
 	}
 	jsonOK(w, map[string]interface{}{
-		"users":         users,
-		"devices":       devices,
+		"users":     users,
+		"protocols": paneldb.VPNProtocols,
+		"devices":   devices,
 		"inbound": map[string]interface{}{
 			"tag":               inbound.Tag,
 			"sub_title":         a.cfg.SubTitle,
@@ -207,23 +228,25 @@ func (a *App) handleUsersList(w http.ResponseWriter, r *http.Request) {
 }
 
 type userAPIReq struct {
-	Password    string    `json:"password"`
-	DeviceID    string    `json:"device_id"`
-	DeviceIDs   *[]string `json:"device_ids"`
-	MaxDevices  int       `json:"max_devices"`
-	Comment     string  `json:"comment"`
-	ExpiresAt   int64   `json:"expires_at"`
-	TotalGB     float64 `json:"total_gb"`
-	MaxDownMBps float64 `json:"max_down_mbps"`
-	MaxUpMBps   float64 `json:"max_up_mbps"`
-	Active      *bool   `json:"active"`
-	Ports       string  `json:"ports"`
-	DtlsPort    int     `json:"dtls_port"`
-	WgPort      int     `json:"wg_port"`
-	ClientPort  int     `json:"client_port"`
-	UseCustomPorts bool `json:"use_custom_ports"`
-	VkHash      string  `json:"vk_hash"`
-	Count       int     `json:"count"`
+	MainVkHash     *string   `json:"main_vk_hash"`
+	Inbounds       *[]string `json:"inbounds"`
+	Password       string    `json:"password"`
+	DeviceID       string    `json:"device_id"`
+	DeviceIDs      *[]string `json:"device_ids"`
+	MaxDevices     int       `json:"max_devices"`
+	Comment        string    `json:"comment"`
+	ExpiresAt      int64     `json:"expires_at"`
+	TotalGB        float64   `json:"total_gb"`
+	MaxDownMBps    float64   `json:"max_down_mbps"`
+	MaxUpMBps      float64   `json:"max_up_mbps"`
+	Active         *bool     `json:"active"`
+	Ports          string    `json:"ports"`
+	DtlsPort       int       `json:"dtls_port"`
+	WgPort         int       `json:"wg_port"`
+	ClientPort     int       `json:"client_port"`
+	UseCustomPorts bool      `json:"use_custom_ports"`
+	VkHash         string    `json:"vk_hash"`
+	Count          int       `json:"count"`
 }
 
 func passwordEntryFromReq(req userAPIReq) *PasswordEntry {
@@ -271,6 +294,12 @@ func (a *App) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), 400)
 		return
 	}
+	if req.Inbounds != nil {
+		if err := paneldb.ValidateProtocols(*req.Inbounds); err != nil {
+			jsonError(w, err.Error(), 400)
+			return
+		}
+	}
 	if req.Password == "" && req.DeviceID == "" && req.Comment == "" && req.ExpiresAt == 0 && req.TotalGB == 0 && req.Active == nil {
 		if req.Count < 1 {
 			req.Count = 1
@@ -289,6 +318,10 @@ func (a *App) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), 400)
 		return
 	}
+	if err := saveUserInbounds(pw, req.Inbounds); err != nil {
+		jsonError(w, err.Error(), 500)
+		return
+	}
 	jsonOK(w, map[string]interface{}{"password": pw})
 }
 
@@ -301,16 +334,51 @@ func (a *App) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), 400)
 		return
 	}
+	if req.Inbounds != nil {
+		if err := paneldb.ValidateProtocols(*req.Inbounds); err != nil {
+			jsonError(w, err.Error(), 400)
+			return
+		}
+	}
 	manageDevices := req.DeviceIDs != nil || strings.TrimSpace(req.DeviceID) != ""
+	db, err := loadPasswords()
+	if err != nil {
+		jsonError(w, err.Error(), 500)
+		return
+	}
+	if req.OldPassword == db.MainPassword && req.Inbounds != nil && !manageDevices {
+		if req.MainVkHash != nil {
+			if _, err := panelDB.Exec(`UPDATE wdtt_users SET vk_hash=? WHERE password=?`, vkhash.Normalize(*req.MainVkHash), req.OldPassword); err != nil {
+				jsonError(w, err.Error(), 500)
+				return
+			}
+		}
+		if err := saveUserInbounds(req.OldPassword, req.Inbounds); err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+		jsonOK(w, nil)
+		return
+	}
 	if err := updateUser(req.OldPassword, strings.TrimSpace(req.Password), req.userAPIReq, manageDevices); err != nil {
 		jsonError(w, err.Error(), 400)
+		return
+	}
+	password := strings.TrimSpace(req.Password)
+	if password == "" {
+		password = req.OldPassword
+	}
+	if err := saveUserInbounds(password, req.Inbounds); err != nil {
+		jsonError(w, err.Error(), 500)
 		return
 	}
 	jsonOK(w, nil)
 }
 
 func (a *App) handleUserResetTraffic(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Password string `json:"password"` }
+	var req struct {
+		Password string `json:"password"`
+	}
 	if err := readJSON(r, &req); err != nil {
 		jsonError(w, err.Error(), 400)
 		return
@@ -327,13 +395,24 @@ func (a *App) handleUserResetTraffic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleUserDelete(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Password string `json:"password"` }
+	var req struct {
+		Password string `json:"password"`
+	}
 	if err := readJSON(r, &req); err != nil {
 		jsonError(w, err.Error(), 400)
 		return
 	}
 	if req.Password == "" {
 		jsonError(w, "пароль не указан", 400)
+		return
+	}
+	db, err := loadPasswords()
+	if err != nil {
+		jsonError(w, err.Error(), 500)
+		return
+	}
+	if req.Password == db.MainPassword {
+		jsonError(w, "Основную подписку удалить нельзя", 400)
 		return
 	}
 	if err := deleteUserPassword(req.Password); err != nil {
@@ -344,7 +423,9 @@ func (a *App) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleMainPassword(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Password string `json:"password"` }
+	var req struct {
+		Password string `json:"password"`
+	}
 	if err := readJSON(r, &req); err != nil {
 		jsonError(w, err.Error(), 400)
 		return
@@ -456,4 +537,19 @@ func (a *App) handleLogs(w http.ResponseWriter, r *http.Request) {
 func writeStatic(w http.ResponseWriter, data []byte, contentType string) {
 	w.Header().Set("Content-Type", contentType)
 	w.Write(data)
+}
+
+func saveUserInbounds(password string, selected *[]string) error {
+	if selected == nil {
+		return nil
+	}
+	db, err := loadPasswords()
+	if err != nil {
+		return err
+	}
+	entry := db.Passwords[password]
+	if entry == nil {
+		return fmt.Errorf("пользователь не найден")
+	}
+	return paneldb.SetUserProtocols(panelDB, entry.SubID, *selected)
 }

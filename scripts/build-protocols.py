@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Build pinned upstream servers; keep their licenses next to the installed binaries."""
 import argparse
+import hashlib
+import inspect
+import tempfile
 import json
 import os
 import platform
@@ -83,6 +86,7 @@ def patch(root, name, pool):
         replace(p, 'days, _ := strconv.Atoi', 'days, _ := strconv.Atoi') if 'days, _ := strconv.Atoi' in p.read_text() else None
         s = p.read_text(encoding='utf-8')
         s = s.replace('days := 30', 'days := 0')
+        s = s.replace('\t\tif vkHash == "" {\n\t\t\tdbMutex.Unlock()\n\t\t\twriteAdminError(w, http.StatusBadRequest, "vk_hash cannot be empty")\n\t\t\treturn\n\t\t}', '')
         s = s.replace('ExpiresAt:  time.Now().Add(time.Duration(days) * 24 * time.Hour).Unix(),', 'ExpiresAt:  protocolExpiry(days),')
         s = s.replace('entry.ExpiresAt = time.Now().Add(time.Duration(parsed) * 24 * time.Hour).Unix()', 'entry.ExpiresAt = protocolExpiry(parsed)')
         s += '\nfunc protocolExpiry(days int) int64 { if days == 0 { return 0 }; return time.Now().Add(time.Duration(days)*24*time.Hour).Unix() }\n'
@@ -93,9 +97,12 @@ def patch(root, name, pool):
 
 def build(name, destination, cache):
     spec = SOURCES[name]
-    root = cache / name
+    patch_id = hashlib.sha256((spec['revision']+inspect.getsource(patch)).encode()).hexdigest()[:12]
+    root = cache / (name+'-'+patch_id)
     if not root.exists():
-        root.mkdir(parents=True)
+        cache.mkdir(parents=True,exist_ok=True)
+        final_root = root
+        root = Path(tempfile.mkdtemp(prefix=name+"-extract-",dir=cache))
         archive = cache / (name + '.tar.gz')
         urllib.request.urlretrieve(f'https://codeload.github.com/{spec["repo"]}/tar.gz/{spec["revision"]}', archive)
         with tarfile.open(archive) as tar:
@@ -113,17 +120,23 @@ def build(name, destination, cache):
                     with tar.extractfile(member) as src, target.open('wb') as dst:
                         shutil.copyfileobj(src, dst)
         patch(root, name, spec['pool'])
+        os.replace(root,final_root)
+        root=final_root
     destination.mkdir(parents=True, exist_ok=True)
     binary = destination / name
+    fd, filename = tempfile.mkstemp(prefix=name+".", dir=destination)
+    os.close(fd)
+    staged = Path(filename)
     env = dict(os.environ, CGO_ENABLED='0', GOTOOLCHAIN='auto', CARGO_BUILD_JOBS='1')
     if name.startswith('csqtt'):
         target={'x86_64':'x86_64-unknown-linux-gnu','aarch64':'aarch64-unknown-linux-gnu'}[platform.machine()]
         subprocess.run(['cargo', '+1.97.1', 'build', '--release', '--locked', '--target', target, '--manifest-path', str(root/'rust-server/Cargo.toml')], cwd=root/'rust-server', env=env, check=True)
-        shutil.copy2(root/f'rust-server/target/{target}/release/csqtt', binary)
+        shutil.copy2(root/f'rust-server/target/{target}/release/csqtt', staged)
     else:
         package = './server' if name == 'qwdtt' else './cmd/server' if name == 'freeturn' else '.'
-        subprocess.run(['go', 'build', '-trimpath', '-o', str(binary.resolve()), package], cwd=root, env=env, check=True)
-    binary.chmod(0o755)
+        subprocess.run(['go', 'build', '-trimpath', '-o', str(staged.resolve()), package], cwd=root, env=env, check=True)
+    staged.chmod(0o755)
+    os.replace(staged, binary)
     license_dir = destination/'licenses'/name
     license_dir.mkdir(parents=True, exist_ok=True)
     for filename in ('LICENSE', 'README.md'):

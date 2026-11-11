@@ -450,6 +450,7 @@ func portsEqual(a, b []int) bool {
 }
 
 func addVPNLocalPortRule(wgIface string, port int) {
+	removeVPNLocalPortRule(wgIface, port)
 	args := []string{"-i", wgIface, "-p", "tcp", "--dport", strconv.Itoa(port),
 		"-m", "comment", "--comment", "WDTT_MANAGED", "-j", "ACCEPT"}
 	exec.Command("iptables", append([]string{"-I", "INPUT", "1"}, args...)...).Run()
@@ -458,7 +459,7 @@ func addVPNLocalPortRule(wgIface string, port int) {
 func removeVPNLocalPortRule(wgIface string, port int) {
 	args := []string{"-i", wgIface, "-p", "tcp", "--dport", strconv.Itoa(port),
 		"-m", "comment", "--comment", "WDTT_MANAGED", "-j", "ACCEPT"}
-	for i := 0; i < 5; i++ {
+	for {
 		if exec.Command("iptables", append([]string{"-D", "INPUT"}, args...)...).Run() != nil {
 			break
 		}

@@ -34,20 +34,14 @@ func (a *App) handleProtocols(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	op, _ := req["op"].(string)
+	switch op {
+	case "list", "create", "delete", "enable", "disable":
+	default:
+		jsonError(w, "Пользователи управляются через /panel/api/users", 400)
+		return
+	}
 	if op == "create" {
 		req["host"] = a.serverIP()
-	}
-	if req["protocol"] == "wdtt" && (op == "create" || op == "delete" || op == "enable" || op == "disable") {
-		cfg, err := loadWdttInbound()
-		if err != nil {
-			jsonError(w, err.Error(), 500)
-			return
-		}
-		cfg.Enable = op == "create" || op == "enable"
-		if _, err := applyWdttInbound(cfg); err != nil {
-			jsonError(w, err.Error(), 500)
-			return
-		}
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -62,6 +56,20 @@ func (a *App) handleProtocols(w http.ResponseWriter, r *http.Request) {
 	if !json.Valid(out) {
 		jsonError(w, "Контроллер протоколов недоступен: проверьте установку и журнал wdtt-protocol-watch", 503)
 		return
+	}
+	if err == nil {
+		if req["protocol"] == "wdtt" && (op == "create" || op == "delete" || op == "enable" || op == "disable") {
+			cfg, err := loadWdttInbound()
+			if err != nil {
+				jsonError(w, err.Error(), 500)
+				return
+			}
+			cfg.Enable = op == "create" || op == "enable"
+			if _, err := applyWdttInbound(cfg); err != nil {
+				jsonError(w, err.Error(), 500)
+				return
+			}
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
@@ -109,6 +117,11 @@ func compileProtocolRouting(raw string) (string, error) {
 	}
 	entries, _ := cfg["inbounds"].([]interface{})
 	children := map[string][]string{}
+	if data, err := os.ReadFile("/etc/wdtt/protocols/user-route-aliases.json"); err == nil {
+		if err := json.Unmarshal(data, &children); err != nil {
+			return "", err
+		}
+	}
 	var vpnTags []interface{}
 	for _, entry := range entries {
 		item, _ := entry.(map[string]interface{})
@@ -219,4 +232,33 @@ func syncProtocolXray() error {
 		return fmt.Errorf("protocol xray: %w", err)
 	}
 	return serviceRestart(xrayServiceUnit)
+}
+
+func resetProtocolUserTraffic(subID string) error {
+	if _, err := os.Stat(protocolController); os.IsNotExist(err) {
+		return nil
+	}
+	body, err := json.Marshal(map[string]string{"op": "reset-user-traffic", "sub_id": subID})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "python3", protocolController)
+	cmd.Stdin = bytes.NewReader(body)
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("не удалось сбросить трафик протоколов: %w", err)
+	}
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"msg"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return err
+	}
+	if !response.Success {
+		return fmt.Errorf("%s", response.Message)
+	}
+	return nil
 }

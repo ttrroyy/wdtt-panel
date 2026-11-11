@@ -1,12 +1,17 @@
 {{define "modals/wdttUserModal"}}
 <a-modal id="user-modal" v-model="userModal.visible"
-  :title="userModal.isMain ? 'Главный пароль' : (userModal.isEdit ? 'Редактировать пользователя' : 'Добавить пользователя')"
+  :title="userModal.isMain ? 'Основная подписка — ADMIN' : (userModal.isEdit ? 'Редактировать пользователя' : 'Добавить пользователя')"
   :confirm-loading="userModal.saving" :closable="true" :mask-closable="false"
   :class="themeSwitcher.currentTheme" ok-text="Сохранить" cancel-text="Закрыть"
   @ok="userModal.save" width="900px">
   <a-tabs :active-key="userModal.activeTab" @change="userModal.activeTab = $event" :class="themeSwitcher.currentTheme">
     <a-tab-pane key="main" tab="Основное">
       <a-form layout="horizontal" :colon="false" :label-col="{ md: {span:8} }" :wrapper-col="{ md: {span:14} }">
+        <a-form-item label="Привязанные инбаунды">
+          <a-select v-model="userForm.inbounds" mode="multiple" placeholder="Выберите инбаунды" :dropdown-class-name="themeSwitcher.currentTheme">
+            <a-select-option v-for="protocol in protocolOptions" :key="protocol.id" :value="protocol.id">[[ protocol.name ]]</a-select-option>
+          </a-select>
+        </a-form-item>
         <a-form-item v-if="!userModal.isMain" label="Активен">
           <a-switch v-model="userForm.active"></a-switch>
         </a-form-item>
@@ -47,7 +52,7 @@
         <a-form-item v-else label="Комментарий">
           <a-input v-model.trim="userForm.comment" placeholder="Имя, заметка"></a-input>
         </a-form-item>
-        <a-form-item v-if="!userModal.isMain" label="VK_HASH">
+        <a-form-item label="VK_HASH">
           <a-textarea
             v-model="userForm.vk_hash"
             :auto-size="{ minRows: 1, maxRows: 4 }"
@@ -109,7 +114,7 @@
           <a-tag color="blue">↑ [[ formatBytes(userForm.up_bytes) ]]</a-tag>
           <a-tag color="green" style="margin-left:6px">↓ [[ formatBytes(userForm.down_bytes) ]]</a-tag>
           <div v-if="userModal.isMain" class="text-muted" style="font-size:12px;margin-top:6px">
-            Общий трафик сервера с момента запуска WDTT
+            Трафик пользователя по всем привязанным инбаундам
           </div>
         </a-form-item>
       </a-form>
@@ -117,8 +122,8 @@
     <a-tab-pane key="conn" tab="Подключение" :forceRender="true">
       <a-row :gutter="[16, 16]">
         <a-col :xs="24" :md="14">
-          <div class="user-conn-block">
-            <div class="user-conn-label">Ссылка</div>
+          <div v-if="userForm.inbounds.includes('wdtt')" class="user-conn-block">
+            <div class="user-conn-label">Ссылка WDTT</div>
             <code class="user-conn-code user-conn-code--copy" title="Нажмите чтобы скопировать"
               @click="copyField(connLink, 'Ссылка')">[[ connLink ]]</code>
             <div class="user-conn-hint">Нажмите на поле — копируется в буфер</div>
@@ -132,8 +137,13 @@
               @click="copyField(userForm.sub_url, 'Подписка')">[[ userForm.sub_url ]]</code>
           </div>
 
-          <div class="user-conn-clients-title">Совместимые клиенты</div>
-          <div v-for="cl in clientLinks" :key="cl.key" class="user-conn-client">
+          <div v-for="connection in userForm.connections.filter(c=>userForm.inbounds.includes(c.protocol))" :key="connection.protocol" class="user-conn-client" style="margin-top:16px">
+            <div class="user-conn-client-name">[[ connection.title ]]</div>
+            <code class="user-conn-code user-conn-code--copy" @click="copyField(connection.link, connection.title)">[[ connection.link ]]</code>
+            <a-textarea v-if="connection.wg_config" :value="connection.wg_config" read-only :rows="10" aria-label="Конфигурация WireGuard FreeTurn"></a-textarea>
+          </div>
+          <div v-if="userForm.inbounds.includes('wdtt')" class="user-conn-clients-title">Совместимые клиенты WDTT</div>
+          <div v-for="cl in (userForm.inbounds.includes('wdtt') ? clientLinks : [])" :key="cl.key" class="user-conn-client">
             <div class="user-conn-client-name">
               <a :href="cl.repo" target="_blank" rel="noopener" @click.stop>[[ cl.title ]]</a>
               <span class="text-muted"> — [[ cl.hint ]]</span>
@@ -154,7 +164,7 @@
               </a>
               <a-tag class="qr-tag" color="green">Подписка</a-tag>
             </div>
-            <div class="qr-box">
+            <div v-if="userForm.inbounds.includes('wdtt')" class="qr-box">
               <a class="qr-bg cursor-pointer" @click.prevent="copyField(connLink, 'Ссылка')" :title="connLink">
                 <canvas id="wdtt-user-share-qr" class="qr-cv"></canvas>
               </a>
@@ -225,11 +235,14 @@
     el: '#user-modal',
     data: {
       userModal,
+      protocolOptions: [{id:'wdtt',name:'WDTT'},{id:'qwdtt',name:'qWDTT'},{id:'wdtt-plus',name:'WDTT Plus'},{id:'csqtt-2.1.9',name:'CSQTT 2.1.9'},{id:'csqtt-2.5.0',name:'CSQTT 2.5.0'},{id:'freeturn',name:'FreeTurn'}],
       apiLink: '',
       linkSnapshot: null,
       qrInstance: null,
       subQrInstance: null,
       userForm: {
+        inbounds: [],
+        connections: [],
         password: '',
         device_ids: [],
         max_devices: 1,
@@ -516,6 +529,8 @@
         this.apiLink = '';
         this.linkSnapshot = null;
         this.userForm = {
+          inbounds: [],
+          connections: [],
           password: this.genPassword(),
           device_ids: [],
           max_devices: 1,
@@ -542,6 +557,7 @@
         const inbound = this.modalInbound;
         this.apiLink = row.link || '';
         this.linkSnapshot = {
+          inbounds: (row.inbounds || ["wdtt"]).slice(),
           password: row.password_key || row.password,
           comment: row.comment || '',
           device_ids: (row.device_ids && row.device_ids.length) ? row.device_ids.slice() : [],
@@ -553,6 +569,8 @@
           client_port: Number(row.client_port) || inbound.client_port || 9000,
         };
         this.userForm = {
+          inbounds: (row.inbounds || ["wdtt"]).slice(),
+          connections: row.connections || [],
           password: row.password_key || row.password,
           device_ids: (row.device_ids && row.device_ids.length) ? row.device_ids.slice() : (row.device_id ? String(row.device_id).split(', ').filter(Boolean) : []),
           max_devices: Number(row.max_devices) || 1,
@@ -630,7 +648,8 @@
             const pwdChanged = this.userForm.password !== this.userModal.oldPassword;
             const snapDevs = (this.linkSnapshot && this.linkSnapshot.device_ids) ? this.linkSnapshot.device_ids : [];
             const devChanged = JSON.stringify(this.userForm.device_ids || []) !== JSON.stringify(snapDevs);
-            if (!pwdChanged && !devChanged) {
+            const membershipsChanged = JSON.stringify(this.userForm.inbounds) !== JSON.stringify(this.linkSnapshot.inbounds);
+            if (!pwdChanged && !devChanged && !membershipsChanged && this.userForm.vk_hash === this.linkSnapshot.vk_hash) {
               Vue.prototype.$message.info('Нет изменений');
               return;
             }
@@ -654,7 +673,10 @@
                 return;
               }
             }
-            Vue.prototype.$message.success('Главный пароль сохранён');
+            const membershipRes = await wdttFetchPost(basePath + 'panel/api/users/update', {old_password:this.userForm.password, inbounds:this.userForm.inbounds, main_vk_hash:this.userForm.vk_hash});
+            const membershipMsg = await membershipRes.json();
+            if (!membershipMsg.success) { this.$message.error(membershipMsg.msg); return; }
+            Vue.prototype.$message.success('Основная подписка сохранена');
             this.userModal.close();
             if (typeof this.userModal.onSaved === 'function') {
               await this.userModal.onSaved();
@@ -663,6 +685,7 @@
           }
           let res;
           const body = {
+            inbounds: this.userForm.inbounds,
             password: this.userForm.password,
             device_ids: this.userForm.device_ids,
             max_devices: Number(this.userForm.max_devices) || 1,

@@ -173,12 +173,16 @@ func (s *wrapKeyStore) Unwrap(raw, dst []byte) (key []byte, m int, password stri
 func refreshWrapKeysFromDBLocked() error {
 	passwords := make([]string, 0, len(db.Passwords))
 	for password, entry := range db.Passwords {
-		if entry == nil || isPasswordExpired(entry) || entry.IsDeactivated || isTrafficExceeded(entry) {
+		if entry == nil || isPasswordExpired(entry) || (entry.IsDeactivated || entry.NativeDisabled) || isTrafficExceeded(entry) {
 			continue
 		}
 		passwords = append(passwords, password)
 	}
-	return serverWrapKeys.SetPasswords(db.MainPassword, passwords)
+	main := db.MainPassword
+	if entry := db.Passwords[main]; entry != nil && entry.NativeDisabled {
+		main = ""
+	}
+	return serverWrapKeys.SetPasswords(main, passwords)
 }
 
 const (

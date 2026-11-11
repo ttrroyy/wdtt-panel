@@ -27,14 +27,11 @@ func TestInstallationCreatesOneStableDefaultSubscription(t *testing.T) {
 	if err := ConfigureInstallation(); err != nil {
 		t.Fatal(err)
 	}
-	var password string
-	if err := panelDB.QueryRow(`SELECT value FROM settings WHERE key='default_subscription_password'`).Scan(&password); err != nil {
-		t.Fatal(err)
-	}
 	first, err := paneldb.LoadStore(panelDB)
 	if err != nil {
 		t.Fatal(err)
 	}
+	password := first.MainPassword
 	if first.MainPassword == "" || first.Users[password] == nil || first.Users[password].SubID == "" {
 		t.Fatal("owner or default subscription not seeded")
 	}
@@ -49,17 +46,18 @@ func TestInstallationCreatesOneStableDefaultSubscription(t *testing.T) {
 	if len(second.Users) != len(first.Users) || second.Users[password].SubID != id {
 		t.Fatal("reinstallation changed default user identity")
 	}
-	if _, err := panelDB.Exec(`DELETE FROM wdtt_users WHERE password=?`, password); err != nil {
+	if len(first.Users) != 1 {
+		t.Fatal("installation created a second main subscription")
+	}
+	selected := []string{"qwdtt", "freeturn"}
+	if err := paneldb.SetUserProtocols(panelDB, id, selected); err != nil {
 		t.Fatal(err)
 	}
 	if err := ConfigureInstallation(); err != nil {
 		t.Fatal(err)
 	}
-	third, err := paneldb.LoadStore(panelDB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if third.Users[password] != nil {
-		t.Fatal("explicitly deleted user was recreated")
+	actual, err := paneldb.UserProtocols(panelDB, id)
+	if err != nil || len(actual) != 2 || actual[0] != "qwdtt" {
+		t.Fatal("reinstall reset chosen inbounds", actual, err)
 	}
 }

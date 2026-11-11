@@ -1,10 +1,10 @@
 package server
 
 import (
-	"errors"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -17,8 +17,8 @@ import (
 )
 
 var (
-	adminListenAddr   = "127.0.0.1:2861"
-	maxDTLSPerDevice  int32 = 0
+	adminListenAddr                = "127.0.0.1:2861"
+	maxDTLSPerDevice  int32        = 0
 	adminReloadSecret atomic.Value // string
 	adminReloadMu     sync.Mutex
 )
@@ -122,7 +122,7 @@ func reloadDBFromDisk(wgDev *device.Device) error {
 				continue
 			}
 			entry := db.Passwords[pass]
-			if entry == nil || isPasswordExpired(entry) || entry.IsDeactivated || isTrafficExceeded(entry) {
+			if entry == nil || isPasswordExpired(entry) || (entry.IsDeactivated || entry.NativeDisabled) || isTrafficExceeded(entry) {
 				removePeerFromWG(wgDev, dev)
 				cancelRawSessionsForDevice(deviceID)
 				cancelRawSessionsForPassword(pass)
@@ -138,7 +138,7 @@ func reloadDBFromDisk(wgDev *device.Device) error {
 				continue
 			}
 			entry := db.Passwords[pass]
-			if entry == nil || isPasswordExpired(entry) || entry.IsDeactivated || isTrafficExceeded(entry) {
+			if entry == nil || isPasswordExpired(entry) || (entry.IsDeactivated || entry.NativeDisabled) || isTrafficExceeded(entry) {
 				cancelRawSessionsForDevice(deviceID)
 				cancelRawSessionsForPassword(pass)
 			}

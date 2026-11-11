@@ -96,7 +96,9 @@ def configure(args):
     own_listener=owned.exists() and re.search(r'\blisten\s+'+str(args.port)+r'(?:\s|;)',owned.read_text()) and f'server_name {host};' in owned.read_text()
     if occupied and 'nginx' not in listeners:
         raise ValueError(f'Порт {args.port} занят другим процессом. Выберите свободный внешний порт.')
-    if occupied and not own_listener and args.mode in ('http','selfsigned'):
+    stream=Path('/etc/nginx/stream-enabled/stream.conf')
+    own_sni=owned.exists() and f'server_name {host};' in owned.read_text() and '127.0.0.1:' in owned.read_text() and Path('/etc/nginx/wdtt-panel-sni.map').exists()
+    if occupied and not own_listener and not own_sni and args.mode in ('http','selfsigned'):
         raise ValueError('Для общего порта нужен отдельный TLS-домен. Для HTTP или сертификата на IP выберите свободный порт.')
     stream=Path('/etc/nginx/stream-enabled/stream.conf')
     use_stream=occupied and args.port==443 and stream.exists() and 'ssl_preread' in stream.read_text()
@@ -119,12 +121,16 @@ def configure(args):
         listen=f'{args.port}'
         proxy_protocol=False
         if use_stream:
-            internal=free_port(29443); listen=f'127.0.0.1:{internal}'
+            existing=re.search(r'listen\s+127\.0\.0\.1:(\d+)',owned.read_text()) if own_sni else None
+            internal=int(existing[1]) if existing else free_port(29443); listen=f'127.0.0.1:{internal}'
             stream_text=stream.read_text()
             if re.search(r'(?m)^\s*'+re.escape(host)+r'\s+',stream_text):
                 raise ValueError('Этот SNI-домен уже занят. Выберите отдельный поддомен или внешний порт.')
             changes[stream]=patch_stream(stream_text,'/etc/nginx/wdtt-panel-sni.map')
-            changes[Path('/etc/nginx/wdtt-panel-sni.map')]=f'{host} 127.0.0.1:{internal};\n'
+            map_file=Path('/etc/nginx/wdtt-panel-sni.map')
+            mapping=map_file.read_text() if map_file.exists() else ''
+            mapping=re.sub(r'(?m)^\s*'+re.escape(host)+r'\s+[^;]+;\s*$', '', mapping)
+            changes[map_file]=mapping.rstrip()+'\n'+f'{host} 127.0.0.1:{internal};\n'
             proxy_protocol=bool(re.search(r'\bproxy_protocol\s+on;',stream_text))
         tls=''
         if args.mode!='http':
@@ -134,7 +140,8 @@ def configure(args):
             listen+=' ssl'+(' proxy_protocol' if proxy_protocol else '')
             tls=f'ssl_certificate {args.cert};\n ssl_certificate_key {args.key};\n ssl_protocols TLSv1.2 TLSv1.3;'
         real_ip='set_real_ip_from 127.0.0.1; real_ip_header proxy_protocol;' if proxy_protocol else ''
-        changes[Path('/etc/nginx/conf.d/wdtt-panel.conf')]=f'server {{\n listen {listen};\n server_name {host};\n {tls}\n {real_ip}\n {snippet}\n}}\n'
+        ipv6='' if listen.startswith('127.0.0.1:') else f'\n listen [::]:{listen};'
+        changes[Path('/etc/nginx/conf.d/wdtt-panel.conf')]=f'server {{\n listen {listen};{ipv6}\n server_name {host};\n {tls}\n {real_ip}\n {snippet}\n}}\n'
     try:
         for file,text in changes.items():
             backup[file]=file.read_bytes() if file.exists() else None

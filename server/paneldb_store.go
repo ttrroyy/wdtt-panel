@@ -89,6 +89,7 @@ func userToPaneldb(e *PasswordEntry) *paneldb.User {
 
 func userFromPaneldb(u *paneldb.User) *PasswordEntry {
 	return &PasswordEntry{
+
 		DeviceID:      u.DeviceID,
 		DeviceIDs:     append([]string(nil), u.DeviceIDs...),
 		MaxDevices:    u.MaxDevices,

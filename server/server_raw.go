@@ -1048,7 +1048,7 @@ func authorizeRawCredentials(clientConn net.Conn, deviceID, password string, wri
 			_, _ = clientConn.Write([]byte(msg))
 		}
 	}
-	if valid && isGenPass && entry.IsDeactivated {
+	if valid && isGenPass && (entry.IsDeactivated || entry.NativeDisabled) {
 		deny("DENIED:deactivated")
 		return false, false
 	}
@@ -1151,7 +1151,7 @@ func runRawRelay(ctx context.Context, clientConn net.Conn, deviceID, ip, passwor
 		if !ok || e == nil {
 			return true
 		}
-		if isPasswordExpired(e) || e.IsDeactivated || isTrafficExceeded(e) {
+		if isPasswordExpired(e) || (e.IsDeactivated || e.NativeDisabled) || isTrafficExceeded(e) {
 			return false
 		}
 		okAcc := true

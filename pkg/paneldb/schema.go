@@ -8,6 +8,7 @@ import (
 // EnsureWDTTSchema — idempotent ALTER для wdtt_* (общее для сервера и панели).
 func EnsureWDTTSchema(db *sql.DB) error {
 	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS vpn_user_inbounds(sub_id TEXT PRIMARY KEY, protocols TEXT NOT NULL)`,
 		`ALTER TABLE wdtt_global ADD COLUMN admin_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE wdtt_global ADD COLUMN bot_token TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE wdtt_users ADD COLUMN sub_id TEXT NOT NULL DEFAULT ''`,

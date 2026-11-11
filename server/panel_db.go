@@ -55,6 +55,18 @@ func loadDatabaseFromSQLite() (*Database, bool, error) {
 		return nil, false, nil
 	}
 	out := databaseFromStore(s)
+	for _, entry := range out.Passwords {
+		protocols, err := paneldb.UserProtocols(db, entry.SubID)
+		if err != nil {
+			return nil, false, err
+		}
+		entry.NativeDisabled = true
+		for _, name := range protocols {
+			if name == "wdtt" {
+				entry.NativeDisabled = false
+			}
+		}
+	}
 	return out, true, nil
 }
 
@@ -229,6 +241,7 @@ func mergeTrafficIntoDatabase(incoming *Database, from map[string]paneldb.Traffi
 			e.DownBytes = u.DownBytes
 			e.LastSeenAt = u.LastSeenAt
 			e.IsDeactivated = u.IsDeactivated
+
 		}
 	}
 }
@@ -300,7 +313,6 @@ func loadDatabaseFromDiskSource() (*Database, error) {
 func saveDatabaseDual() error {
 	return saveDB()
 }
-
 
 func panelUsersRevOnDisk() int64 {
 	if !serverPanelDBReady() {
@@ -424,7 +436,7 @@ func syncPanelDeviceEditsLocked() {
 				continue
 			}
 			entry := db.Passwords[pass]
-			if entry == nil || isPasswordExpired(entry) || entry.IsDeactivated || isTrafficExceeded(entry) {
+			if entry == nil || isPasswordExpired(entry) || entry.IsDeactivated || entry.NativeDisabled || isTrafficExceeded(entry) {
 				removePeerFromWG(wgDev, dev)
 				cancelRawSessionsForDevice(deviceID)
 				cancelRawSessionsForPassword(pass)
@@ -447,7 +459,7 @@ func syncPanelDeviceEditsLocked() {
 				continue
 			}
 			entry := db.Passwords[pass]
-			if entry == nil || isPasswordExpired(entry) || entry.IsDeactivated || isTrafficExceeded(entry) {
+			if entry == nil || isPasswordExpired(entry) || entry.IsDeactivated || entry.NativeDisabled || isTrafficExceeded(entry) {
 				cancelRawSessionsForDevice(deviceID)
 				cancelRawSessionsForPassword(pass)
 			}

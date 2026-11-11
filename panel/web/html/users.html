@@ -20,7 +20,7 @@
           </a-row>
           <a-row :gutter="[isMobile ? 8 : 16, isMobile ? 0 : 12]" v-else>
             <a-col>
-              <a-card title="Пользователи WDTT" hoverable>
+              <a-card title="Пользователи" hoverable>
                 <template #extra>
                   <a-button-group>
                     <a-button icon="sync" @click="manualRefresh" :loading="refreshing"></a-button>

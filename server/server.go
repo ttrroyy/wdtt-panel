@@ -90,22 +90,23 @@ type ClientDevice struct {
 }
 
 type PasswordEntry struct {
-	DeviceID      string   `json:"device_id,omitempty"`     // legacy, синхронизируется с device_ids[0]
-	DeviceIDs     []string `json:"device_ids,omitempty"`    // привязанные устройства
-	MaxDevices    int      `json:"max_devices,omitempty"`   // 0 = 1, лимит слотов
-	ExpiresAt     int64    `json:"expires_at"`              // unix timestamp
-	DownBytes     int64    `json:"down_bytes"`              // скачано клиентом
-	UpBytes       int64    `json:"up_bytes"`                // отдано клиентом
-	TotalBytes    int64    `json:"total_bytes,omitempty"`   // 0 = без лимита
-	MaxDownMBps   float64  `json:"max_down_mbps,omitempty"` // 0 = без лимита, MB/s
-	MaxUpMBps     float64  `json:"max_up_mbps,omitempty"`   // 0 = без лимита, MB/s
-	Comment       string   `json:"comment,omitempty"`
-	VkHash        string   `json:"vk_hash,omitempty"`
-	WbRoom        string   `json:"wb_room,omitempty"`
-	Ports         string   `json:"ports,omitempty"` // "dtls,wg,tun"
-	IsDeactivated bool     `json:"is_deactivated,omitempty"`
-	SubID         string   `json:"sub_id,omitempty"`
-	LastSeenAt    int64    `json:"last_seen_at,omitempty"`
+	DeviceID       string   `json:"device_id,omitempty"`     // legacy, синхронизируется с device_ids[0]
+	DeviceIDs      []string `json:"device_ids,omitempty"`    // привязанные устройства
+	MaxDevices     int      `json:"max_devices,omitempty"`   // 0 = 1, лимит слотов
+	ExpiresAt      int64    `json:"expires_at"`              // unix timestamp
+	DownBytes      int64    `json:"down_bytes"`              // скачано клиентом
+	UpBytes        int64    `json:"up_bytes"`                // отдано клиентом
+	TotalBytes     int64    `json:"total_bytes,omitempty"`   // 0 = без лимита
+	MaxDownMBps    float64  `json:"max_down_mbps,omitempty"` // 0 = без лимита, MB/s
+	MaxUpMBps      float64  `json:"max_up_mbps,omitempty"`   // 0 = без лимита, MB/s
+	Comment        string   `json:"comment,omitempty"`
+	VkHash         string   `json:"vk_hash,omitempty"`
+	WbRoom         string   `json:"wb_room,omitempty"`
+	Ports          string   `json:"ports,omitempty"` // "dtls,wg,tun"
+	NativeDisabled bool     `json:"-"`
+	IsDeactivated  bool     `json:"is_deactivated,omitempty"`
+	SubID          string   `json:"sub_id,omitempty"`
+	LastSeenAt     int64    `json:"last_seen_at,omitempty"`
 }
 
 type Database struct {

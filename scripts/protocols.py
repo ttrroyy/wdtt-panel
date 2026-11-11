@@ -210,7 +210,7 @@ def serve(name):
 
 def request(name, path, data=None, method=None):
     p=spec(name); cfg=settings(name); host=f'10.253.{p["index"]}.2'
-    headers={}
+    headers={'Host':cfg['host']}
     if name=='qwdtt':
         # Trust only this instance's generated certificate; the API is namespace-local.
         context=ssl.create_default_context(cafile=str(directory(name)/'web_cert.pem'))
@@ -347,16 +347,23 @@ def display_users(name):
         row['enabled']=not row.get('is_deactivated',False) and row.get('active',True) and row.get('status','active')=='active' and not (row.get('expires_at',0) and row['expires_at']<=time.time())
         if name=='qwdtt':
             row['link']='qwdtt://config?'+urllib.parse.urlencode({'name':row['name'],'peer':f'{cfg["host"]}:{port}','pass':password,
-                                                              'hashes':row.get('vk_hash',''),'workers':18,'port':9000})
+                                                              'hashes':row.get('vk_hash',''),'workers':9,'port':9000})
         elif name=='wdtt-plus':
             row['link']=f'wdtt://{cfg["host"]}:{port}:{port+1}:9000:{password}:{row.get("vk_hash","")}'
-        elif name.startswith('csqtt'):
-            row['link']='csqtt://connect?'+urllib.parse.urlencode({'v':2,'host':cfg['host'],'peer':port,'password':password,
-                                                                 'hashes':row.get('vk_hashes') or row.get('vk_hash','')})
+        elif name=='csqtt-2.5.0':
+            # Use the original server's encrypted URI, including its original hash encoding.
+            if not row.get('link','').startswith('csqtt://'): raise ValueError('Сервер CSQTT не вернул ссылку')
+        elif name=='csqtt-2.1.9':
+            row['link']='csqtt://connect?'+urllib.parse.urlencode({'v':2,'host':cfg['host'],'peer':port,'password':password},quote_via=urllib.parse.quote)
+            hashes=[value.strip() for value in (row.get('vk_hashes') or row.get('vk_hash','')).split(',') if value.strip()]
+            if hashes: row['link']+='&hashes='+'+'.join(urllib.parse.quote(value,safe='') for value in hashes)
         elif name=='freeturn':
             payload={'v':1,'provider':'vk','peer':f'{cfg["host"]}:{port}','obf':'rtpopus3','key':cfg['obf_key'],'cid':password,'name':row['name']}
-            row['link']='freeturn://'+base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
             row['wg_config']=f'[Interface]\nPrivateKey = {meta["private_key"]}\nAddress = {meta["ip"]}/32\nDNS = 1.1.1.1\nMTU = 1280\n\n[Peer]\nPublicKey = {(directory(name)/"wg-public").read_text().strip()}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 127.0.0.1:9000\nPersistentKeepalive = 25\n'
+            payload['wg']=row['wg_config'];payload['listen']='127.0.0.1:9000'
+            hashes=[value.strip() for value in meta.get('vk_hash','').split(',') if value.strip()]
+            if hashes: payload['vk']=','.join(value if '://' in value else 'https://vk.com/call/join/'+value for value in hashes)
+            row['link']='freeturn://'+base64.urlsafe_b64encode(json.dumps(payload,separators=(',',':'),ensure_ascii=False).encode()).decode().rstrip('=')
     return rows
 
 
@@ -393,7 +400,7 @@ def create_user(name, data):
     with locked():
         s=state(); entry=s['users'].setdefault(name,{}).setdefault(password,{})
         entry.update(row if name=='freeturn' else {})
-        entry.update(name=label,total_bytes=total,max_mbps=speed)
+        entry.update(name=label,total_bytes=total,max_mbps=speed,vk_hash=vk)
         save(s)
     if name=='freeturn':
         sync_freeturn()
@@ -451,7 +458,7 @@ def mutate_user(name, data, delete=False):
             raise ValueError('Некорректное имя или срок')
         if name=='qwdtt':
             payload={'password':password,'label':label,'days':days,'max_devices':int(data.get('max_devices',current.get('max_devices',1)))}
-            if vk: payload['vk_hash']=vk
+            payload['vk_hash']=vk
             request(name,'/admin/passwords/update',payload)
         elif name=='wdtt-plus':
             port=spec(name)['port']
@@ -463,7 +470,7 @@ def mutate_user(name, data, delete=False):
             request(name,'/api/clients/'+urllib.parse.quote(password,safe=''),payload,'POST')
         elif name=='freeturn':
             with locked():
-                s=state(); entry=s['users'][name][password]; entry['name']=label
+                s=state(); entry=s['users'][name][password]; entry['name']=label; entry['vk_hash']=vk
                 if 'days' in data: entry['expires_at']=int(time.time())+days*86400 if days else 0
                 save(s)
     if 'enabled' in data:
@@ -493,6 +500,13 @@ def profile_list():
             with locked():
                 current=state();current.setdefault('disabled',{})['wdtt']=not bool(native[1]);save(current)
             s.setdefault('disabled',{})['wdtt']=not bool(native[1])
+    counts={name:0 for name in PROFILES}
+    if db_path.exists():
+        with sqlite3.connect(db_path,timeout=5) as db:
+            for (sub_id,) in db.execute('SELECT sub_id FROM wdtt_users'):
+                selected=db.execute('SELECT protocols FROM vpn_user_inbounds WHERE sub_id=?',(sub_id,)).fetchone()
+                for name in json.loads(selected[0]) if selected else ['wdtt']:
+                    if name in counts: counts[name]+=1
     rows=[]
     for name,p in PROFILES.items():
         row=dict(p,id=name,tag='vpn-'+name,subnet=f'10.{p["pool"]}.0.0/16',present=bool(s['profiles'].get(name)))
@@ -501,7 +515,7 @@ def profile_list():
         row['enabled']=not s.get('disabled',{}).get(name,False)
         cache=directory(name)/'last-users.json'
         cached=json.loads(cache.read_text()) if cache.exists() else []
-        row['users']=len(cached)
+        row['users']=counts[name]
         row['traffic_bytes']=sum(x.get('up_bytes',0)+x.get('down_bytes',0) for x in cached)
         ports=[row['port']]
         if name in ('wdtt','qwdtt','wdtt-plus','freeturn'): ports.append(native[2] if name=='wdtt' and native else row['port']+1)
@@ -561,57 +575,117 @@ def profile_toggle(name, enabled):
         s=state();s.setdefault('disabled',{})[name]=not enabled;save(s)
 
 
+def native_users():
+    with sqlite3.connect(ROOT.parent/'panel.db',timeout=5) as db:
+        db.row_factory=sqlite3.Row
+        return [dict(row) for row in db.execute('SELECT * FROM wdtt_users')]
+
+
+def selected_protocols(master,bundle):
+    with sqlite3.connect(ROOT.parent/'panel.db',timeout=5) as db:
+        row=db.execute('SELECT protocols FROM vpn_user_inbounds WHERE sub_id=?',(master['sub_id'],)).fetchone()
+        if row: return json.loads(row[0])
+        # Preserve memberships of subscriptions created by the previous release.
+        selected=['wdtt']+list(bundle.get('members',{}))
+        db.execute('INSERT INTO vpn_user_inbounds(sub_id,protocols) VALUES(?,?)',(master['sub_id'],json.dumps(selected)))
+        return selected
+
+
 def seed_default_subscription():
     with sqlite3.connect(ROOT.parent/'panel.db',timeout=5) as db:
-        marker=db.execute("SELECT value FROM settings WHERE key='default_subscription_password'").fetchone()
-        if not marker: raise ValueError('Сначала выполните инициализацию панели')
-        native=db.execute('SELECT sub_id,comment,vk_hash FROM wdtt_users WHERE password=?',(marker[0],)).fetchone()
-    if not native: return {}  # A deliberately deleted default user must stay deleted.
-    sub_id,label,vk=native
+        row=db.execute('SELECT u.sub_id FROM wdtt_users u JOIN wdtt_global g ON u.password=g.main_password WHERE g.id=1').fetchone()
+    if not row or not row[0]: raise ValueError('Главный пользователь ещё не инициализирован')
+    atomic(ROOT/'default-subscription-id',row[0]+'\n')
+    return {'sub_id':row[0]}
+
+
+def adopt_legacy_users(rows_by_profile):
     with locked():
-        s=state();bundle=s.setdefault('bundles',{}).setdefault(sub_id,{'wdtt_password':marker[0],'members':{}});save(s)
-    for name in PROFILES:
-        if name=='wdtt' or name in bundle['members']: continue
-        row=create_user(name,{'name':label,'vk_hash':vk,'days':0,'total_bytes':0,'max_mbps':0})
-        bundle['members'][name]=row['password']
-        with locked():
-            s=state();s['bundles'][sub_id]=bundle;save(s)
-    atomic(ROOT/'default-subscription-id',sub_id+'\n')
-    return {'sub_id':sub_id}
+        s=state()
+        linked={(name,password) for bundle in s.get('bundles',{}).values() for name,password in bundle.get('members',{}).items()}
+        for name,rows in rows_by_profile.items():
+            if name=='wdtt': continue
+            for row in rows:
+                if (name,row['password']) in linked: continue
+                identity=secrets.token_hex(16);sub_id=secrets.token_hex(8)
+                with sqlite3.connect(ROOT.parent/'panel.db',timeout=5) as db:
+                    db.execute('INSERT INTO wdtt_users(password,sub_id,comment,expires_at,is_deactivated,total_bytes) VALUES(?,?,?,?,?,?)',
+                               (identity,sub_id,row['name'],row.get('expires_at',0),int(not row['enabled']),row.get('total_bytes',0)))
+                    db.execute('INSERT INTO vpn_user_inbounds(sub_id,protocols) VALUES(?,?)',(sub_id,json.dumps([name])))
+                    db.execute("UPDATE wdtt_global SET users_rev=users_rev+1 WHERE id=1")
+                s.setdefault('bundles',{})[sub_id]={'wdtt_password':identity,'members':{name:row['password']}}
+                save(s)
 
 
 def sync_subscription_bundles(rows_by_profile):
     with locked():
         current=state();bundles=dict(current.get('bundles',{}))
         active_profiles={name:present and not current.get('disabled',{}).get(name,False) for name,present in current['profiles'].items()}
-    result={}
-    with sqlite3.connect(ROOT.parent/'panel.db',timeout=5) as db:
-        db.row_factory=sqlite3.Row
-        native={row['password']:dict(row) for row in db.execute('SELECT password,comment,vk_hash,expires_at,is_deactivated,total_bytes,up_bytes,down_bytes FROM wdtt_users')}
-    for sub_id,bundle in bundles.items():
-        master=native.get(bundle['wdtt_password'])
-        connections=[];up=down=0
-        master_active=bool(master) and not master['is_deactivated'] and not (master['expires_at'] and master['expires_at']<=time.time())
-        signature=json.dumps([master.get('comment'),master.get('vk_hash'),master.get('expires_at')] if master else None)
-        for name,password in bundle['members'].items():
-            row=next((item for item in rows_by_profile.get(name,[]) if item['password']==password),None)
-            if row is None:continue
-            if master and signature!=bundle.get('signature'):
-                days=max(1,int((master['expires_at']-time.time())/86400)+1) if master['expires_at'] else 0
-                mutate_user(name,{'password':password,'name':master['comment'],'vk_hash':master['vk_hash'],'days':days})
-            blocked=bundle.setdefault('blocked',{})
-            if not master_active and row['enabled']:
-                enabled_user(name,password,False);blocked[name]=True
-            elif master_active and blocked.get(name):
-                enabled_user(name,password,True);blocked.pop(name,None)
-            if row['enabled'] and master_active and active_profiles.get(name):
-                connections.append({'protocol':name,'title':spec(name)['name'],'link':row['link'],'wg_config':row.get('wg_config','')})
-            up+=row.get('up_bytes',0);down+=row.get('down_bytes',0)
-        bundle['signature']=signature
+    result={};aliases={};options=[];errors=[]
+    native={master['sub_id']:master for master in native_users() if master['sub_id']}
+    # Deleted identities lose all backend access, even when their old credentials remain on disk.
+    for sub_id,bundle in list(bundles.items()):
+        if sub_id in native: continue
+        for name,password in bundle.get('members',{}).items():
+            row=next((x for x in rows_by_profile.get(name,[]) if x['password']==password),None)
+            if row and row['enabled']: enabled_user(name,password,False)
+    for sub_id,master in native.items():
+        bundle=bundles.setdefault(sub_id,{'members':{}})
+        bundle['wdtt_password']=master['password']
+        selected=selected_protocols(master,bundle)
+        if any(name not in PROFILES for name in selected): raise ValueError('Неизвестный инбаунд подписки')
+        connections=[];up=down=0;tags=[]
+        if 'wdtt' in selected: tags.append('vpn-wdtt-user-'+user_id('wdtt',master['password']))
+        master_active=not master['is_deactivated'] and not (master['expires_at'] and master['expires_at']<=time.time())
+        signature=json.dumps([master['comment'],master['vk_hash'],master['expires_at'],master['total_bytes'],master['max_down_mbps'],master['max_up_mbps'],master['max_devices']])
+        for name in PROFILES:
+            if name=='wdtt': continue
+            password=bundle['members'].get(name)
+            row=next((item for item in rows_by_profile.get(name,[]) if item['password']==password),None) if password else None
+            try:
+                if name in selected and active_profiles.get(name) and not password:
+                    created=create_user(name,{'name':master['comment'] or 'Пользователь','vk_hash':master['vk_hash'],'days':0,'max_devices':master['max_devices'] or 1})
+                    password=created['password'];bundle['members'][name]=password
+                    # Save immediately: a failed following backend must not duplicate this credential.
+                    with locked():
+                        state_now=state();state_now.setdefault('bundles',{})[sub_id]=bundle;save(state_now)
+                    row=next(x for x in display_users(name) if x['password']==password)
+                    rows_by_profile.setdefault(name,[]).append(row)
+                if row is None: continue
+                if name in selected: tags.append('vpn-'+name+'-user-'+user_id(name,password))
+                if active_profiles.get(name) and signature!=bundle.get('signatures',{}).get(name):
+                    days=min(365,max(1,int((master['expires_at']-time.time())/86400)+1)) if master['expires_at'] else 0
+                    # Identity controls expiry and quota across all of its member protocols.
+                    speeds=[v*8 for v in (master['max_down_mbps'],master['max_up_mbps']) if v>0]
+                    mutate_user(name,{'password':password,'name':master['comment'] or 'Пользователь','vk_hash':master['vk_hash'],'days':days,'max_devices':master['max_devices'] or 1,'total_bytes':0,'max_mbps':min(speeds) if speeds else 0})
+                    bundle.setdefault('signatures',{})[name]=signature
+                up+=row.get('up_bytes',0);down+=row.get('down_bytes',0)
+                allowed=master_active and name in selected
+                if active_profiles.get(name) and row['enabled']!=allowed:
+                    enabled_user(name,password,allowed);row['enabled']=allowed
+                if allowed and active_profiles.get(name):
+                    connections.append({'protocol':name,'title':spec(name)['name'],'link':row['link'],'wg_config':row.get('wg_config','')})
+            except Exception as error: errors.append(sub_id+'/'+name+': '+str(error))
+        raw_up,raw_down=up,down
+        offsets=bundle.get('traffic_offsets',{})
+        up=max(0,up-offsets.get('up_bytes',0));down=max(0,down-offsets.get('down_bytes',0))
+        used=up+down+master['up_bytes']+master['down_bytes']
+        if master['total_bytes'] and used>=master['total_bytes']:
+            # Native suspension also triggers its normal live peer revocation.
+            with sqlite3.connect(ROOT.parent/'panel.db',timeout=5) as db:
+                db.execute('UPDATE wdtt_users SET is_deactivated=1 WHERE sub_id=?',(sub_id,))
+                db.execute("UPDATE wdtt_global SET users_rev=users_rev+1 WHERE id=1")
+            for name,password in bundle['members'].items():
+                if active_profiles.get(name): enabled_user(name,password,False)
+            connections=[]
         with locked():
-            s=state();s.setdefault('bundles',{})[sub_id]=bundle;save(s)
-        if master:result[sub_id]={'connections':connections,'up_bytes':up,'down_bytes':down}
+            state_now=state();state_now.setdefault('bundles',{})[sub_id]=bundle;save(state_now)
+        tag='vpn-user-'+sub_id;aliases[tag]=tags
+        options.append({'tag':tag,'label':master['comment'] or 'Пользователь'})
+        result[sub_id]={'connections':connections,'up_bytes':up,'down_bytes':down,'raw_up_bytes':raw_up,'raw_down_bytes':raw_down}
     atomic(ROOT.parent/'protocol-subscriptions.json',result)
+    atomic(ROOT/'user-route-aliases.json',aliases)
+    return options,errors
 
 
 def transparent_inbound(tag,port):
@@ -649,6 +723,10 @@ def routing_snapshot(rows_by_profile):
                 row=db.execute('SELECT raw_json FROM xray_config WHERE id=1').fetchone()
                 if row and row[0]: raw=json.loads(row[0])
         wanted={tag for rule in raw.get('routing',{}).get('rules',[]) for tag in rule.get('inboundTag',[]) if '-user-' in tag}
+        aliases=ROOT/'user-route-aliases.json'
+        if aliases.exists():
+            for tag,children in json.loads(aliases.read_text()).items():
+                if tag in wanted: wanted.update(children)
         for name,rows in rows_by_profile.items():
             for row in rows:
                 if row['tag'] not in wanted: continue
@@ -741,15 +819,12 @@ def reconcile():
             errors.append(name+': '+str(error))
             cache=directory(name)/'last-users.json'
             rows_by_profile.setdefault(name,json.loads(cache.read_text()) if cache.exists() else [])
-    options=[]
-    for name, rows in rows_by_profile.items():
-        options.append({'tag':'vpn-'+name,'label':spec(name)['name']})
-        options.extend({'tag':'vpn-'+name+'-user-'+user_id(name,row['password']),
-                        'label':spec(name)['name']+' / '+(row.get('name') or row.get('label') or row.get('comment') or 'Пользователь')}
-                       for row in rows)
-    atomic(ROOT/'route-options.json',options)
+    adopt_legacy_users(rows_by_profile)
+    user_options,user_errors=sync_subscription_bundles(rows_by_profile)
+    errors.extend(user_errors)
+    options=[{'tag':'vpn-'+name,'label':spec(name)['name']} for name in rows_by_profile]
+    atomic(ROOT/'route-options.json',options+user_options)
     generated,ingress=routing_snapshot(rows_by_profile)
-    sync_subscription_bundles(rows_by_profile)
     path=ROOT/'routing.signature'; signature=hashlib.sha256(json.dumps(ingress).encode()).hexdigest()
     if not path.exists() or path.read_text()!=signature:
         apply_routes(ingress); atomic(path,signature)
@@ -761,6 +836,17 @@ def api(data):
     operation=data.get('op','list'); name=data.get('protocol','')
     if operation=='list': return profile_list()
     if operation=='seed-default': return seed_default_subscription()
+    if operation=='reset-user-traffic':
+        sub_id=str(data.get('sub_id',''))
+        with locked():
+            s=state();bundle=s.get('bundles',{}).get(sub_id)
+            if not bundle: return {}
+            snapshot=ROOT.parent/'protocol-subscriptions.json'
+            totals=json.loads(snapshot.read_text()).get(sub_id,{}) if snapshot.exists() else {}
+            offsets=bundle.setdefault('traffic_offsets',{})
+            for key in ('up_bytes','down_bytes'):offsets[key]=totals.get('raw_'+key,totals.get(key,0))
+            save(s)
+        return {}
     spec(name)
     if operation=='create': profile_create(name,str(data.get('host','')))
     elif operation=='delete': profile_delete(name)

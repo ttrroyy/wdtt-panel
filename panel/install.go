@@ -20,31 +20,24 @@ func ConfigureInstallation() error {
 	if store.Users[store.MainPassword] == nil {
 		store.Users[store.MainPassword] = &paneldb.User{MaxDevices: 1, Comment: paneldb.MainUserComment}
 	}
-	var defaultPassword string
-	_ = panelDB.QueryRow(`SELECT value FROM settings WHERE key='default_subscription_password'`).Scan(&defaultPassword)
-	if defaultPassword == "" {
-		defaultPassword = randomHex(16)
-		if _, err := panelDB.Exec(`INSERT OR IGNORE INTO settings(key,value) VALUES('default_subscription_password',?)`, defaultPassword); err != nil {
-			return err
-		}
-		if err := panelDB.QueryRow(`SELECT value FROM settings WHERE key='default_subscription_password'`).Scan(&defaultPassword); err != nil {
-			return err
-		}
-	}
-	var initialized string
-	_ = panelDB.QueryRow(`SELECT value FROM settings WHERE key='default_subscription_initialized'`).Scan(&initialized)
-	if store.Users[defaultPassword] == nil && initialized != "1" {
+	if store.Users[store.MainPassword].SubID == "" {
 		subID, err := genSubID()
 		if err != nil {
 			return err
 		}
-		store.Users[defaultPassword] = &paneldb.User{MaxDevices: 1, Comment: "Основная подписка", SubID: subID}
+		store.Users[store.MainPassword].SubID = subID
 	}
 	if err := paneldb.SaveStore(panelDB, store, paneldb.SaveOptions{PreserveSubIDs: true}); err != nil {
 		return err
 	}
-	if _, err := panelDB.Exec(`INSERT OR REPLACE INTO settings(key,value) VALUES('default_subscription_initialized','1')`); err != nil {
+	var initialized int
+	if err := panelDB.QueryRow(`SELECT COUNT(*) FROM vpn_user_inbounds WHERE sub_id=?`, store.Users[store.MainPassword].SubID).Scan(&initialized); err != nil {
 		return err
+	}
+	if initialized == 0 {
+		if err := paneldb.SetUserProtocols(panelDB, store.Users[store.MainPassword].SubID, paneldb.VPNProtocols); err != nil {
+			return err
+		}
 	}
 	cfg, err := loadPanelConfig()
 	if err != nil {

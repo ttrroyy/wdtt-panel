@@ -1,20 +1,36 @@
 #!/usr/bin/env bash
-# WDTT Panel: all six VPN servers, with only TLS and external-port choices.
+# WDTT Panel: all six VPN servers, with Nginx on 443 and a single TLS choice.
 set -euo pipefail
 umask 077
 [[ $(id -u) == 0 ]] || { echo 'Запустите установщик от root.' >&2; exit 1; }
 . /etc/os-release
 case "$ID" in debian|ubuntu) ;; *) echo 'Поддерживаются Debian и Ubuntu.' >&2; exit 1;; esac
-SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)
+if [[ "${1:-}" == uninstall && -f /usr/local/lib/wdtt/uninstall.py ]]; then
+    exec python3 /usr/local/lib/wdtt/uninstall.py
+fi
 if [[ ! -f "$SOURCE_DIR/scripts/protocols.py" ]]; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
     apt-get install -y -qq git ca-certificates
     SOURCE_DIR=$(mktemp -d /opt/wdtt-panel-install.XXXXXX)
     git clone --depth 1 https://github.com/ttrroyy/wdtt-panel.git "$SOURCE_DIR"
-    exec bash "$SOURCE_DIR/install.sh"
+    exec bash "$SOURCE_DIR/install.sh" "$@"
 fi
 
+[[ "${1:-}" != install ]] || shift
+if [[ "${1:-}" == uninstall ]]; then
+    exec python3 "$SOURCE_DIR/scripts/uninstall.py"
+fi
+[[ $# == 0 ]] || { echo 'Использование: install.sh [uninstall]' >&2; exit 1; }
+# Persisted installer settings are data, never shell code.
+if [[ -f /etc/wdtt/installation.json ]]; then
+    while IFS='=' read -r name value; do
+        case "$name" in WDTT_TLS_MODE|WDTT_PANEL_HOST|WDTT_PUBLIC_IP|WDTT_EXTERNAL_PORT|WDTT_CERT_FILE|WDTT_KEY_FILE|WDTT_BACKEND_PORT|WDTT_SUB_PORT)
+            [[ -n "${!name:-}" ]] || export "$name=$value";;
+        esac
+    done < <(python3 -c 'import json; d=json.load(open("/etc/wdtt/installation.json")); print("\n".join(k+"="+str(v) for k,v in d.items()))')
+fi
 prompt() { read -r -p "$1" "$2" </dev/tty; }
 MODE=${WDTT_TLS_MODE:-}
 if [[ -z "$MODE" ]]; then
@@ -29,23 +45,18 @@ CERT=${WDTT_CERT_FILE:-}; KEY=${WDTT_KEY_FILE:-}
 if [[ "$MODE" == existing || "$MODE" == certbot ]]; then
     [[ -n "${WDTT_PANEL_HOST:-}" ]] || prompt 'Домен панели: ' PANEL_HOST
     if [[ "$MODE" == existing ]]; then
-        CERT=${CERT:-/etc/letsencrypt/live/$PANEL_HOST/fullchain.pem}
+        if [[ -z "$CERT" || -z "$KEY" ]]; then
+            mapfile -t detected < <(python3 "$SOURCE_DIR/scripts/certificates.py" find "$PANEL_HOST" "${WDTT_EXTERNAL_PORT:-443}" 2>/dev/null || true)
+            CERT=${CERT:-${detected[0]:-/etc/letsencrypt/live/$PANEL_HOST/fullchain.pem}}
+            KEY=${KEY:-${detected[1]:-/etc/letsencrypt/live/$PANEL_HOST/privkey.pem}}
+        fi
         KEY=${KEY:-/etc/letsencrypt/live/$PANEL_HOST/privkey.pem}
         [[ -f "$CERT" ]] || prompt 'Путь к сертификату: ' CERT
         [[ -f "$KEY" ]] || prompt 'Путь к закрытому ключу: ' KEY
     fi
 fi
-EXTERNAL_PORT=${WDTT_EXTERNAL_PORT:-}
-if [[ -z "$EXTERNAL_PORT" ]]; then
-    printf '\nВнешний порт:\n1) Оставить 443 (по умолчанию)\n2) Выбрать свой\n'
-    prompt 'Вариант [1]: ' choice
-    case "${choice:-1}" in 1) EXTERNAL_PORT=443;; 2) prompt 'Внешний порт: ' EXTERNAL_PORT;; *) echo 'Неизвестный вариант'; exit 1;; esac
-fi
-[[ "$EXTERNAL_PORT" =~ ^[0-9]+$ && "$EXTERNAL_PORT" -ge 1 && "$EXTERNAL_PORT" -le 65535 ]] || { echo 'Некорректный порт'; exit 1; }
-while ! python3 "$SOURCE_DIR/scripts/configure-nginx.py" --check --host "$PANEL_HOST" --mode "$MODE" --port "$EXTERNAL_PORT"; do
-    [[ -z "${WDTT_EXTERNAL_PORT:-}" ]] || exit 1
-    prompt 'Выберите другой внешний порт: ' EXTERNAL_PORT
-done
+EXTERNAL_PORT=443
+python3 "$SOURCE_DIR/scripts/configure-nginx.py" --check --host "$PANEL_HOST" --mode "$MODE" --port 443
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -81,6 +92,11 @@ if [[ ! -x /usr/local/wdtt-xray/bin/xray-linux-amd64 ]]; then
     install -d /usr/local/wdtt-xray/bin
     install -m 755 "$XRAY_TEMP/files/xray" /usr/local/wdtt-xray/bin/xray-linux-amd64
     for file in geoip.dat geosite.dat; do [[ ! -f "$XRAY_TEMP/files/$file" ]] || install -m 644 "$XRAY_TEMP/files/$file" /usr/local/wdtt-xray/bin/; done
+fi
+if [[ -f /etc/wdtt/panel.db ]]; then
+    read -r saved_backend saved_sub < <(python3 -c 'import sqlite3; d=sqlite3.connect("/etc/wdtt/panel.db"); r=d.execute("SELECT port,sub_port FROM panel_config WHERE id=1").fetchone(); print(*r)')
+    export WDTT_BACKEND_PORT=${WDTT_BACKEND_PORT:-$saved_backend}
+    export WDTT_SUB_PORT=${WDTT_SUB_PORT:-$saved_sub}
 fi
 export WDTT_BACKEND_PORT=${WDTT_BACKEND_PORT:-$(python3 -c 'import runpy,sys; m=runpy.run_path(sys.argv[1]); print(m["free_port"](2860))' "$SOURCE_DIR/scripts/configure-nginx.py")}
 export WDTT_SUB_PORT=${WDTT_SUB_PORT:-$(python3 -c 'import runpy,sys; m=runpy.run_path(sys.argv[1]); print(m["free_port"](2096))' "$SOURCE_DIR/scripts/configure-nginx.py")}
@@ -171,14 +187,12 @@ systemctl daemon-reload
 systemctl enable --now nginx wdtt wdtt-xray
 systemctl restart wdtt wdtt-xray
 for protocol in qwdtt wdtt-plus csqtt-2.1.9 csqtt-2.5.0 freeturn; do
-    if python3 -c 'import json,sys; s=json.load(open("/etc/wdtt/protocols/state.json")); sys.exit(0 if s["profiles"].get(sys.argv[1]) else 1)' "$protocol"; then
-        systemctl restart "wdtt-protocol@$protocol"
-        continue
-    fi
-    printf '{"op":"create","protocol":"%s","host":"%s"}\n' "$protocol" "$PUBLIC_IP" | python3 /usr/local/lib/wdtt/protocols.py || {
-        printf '{"op":"list"}\n' | python3 /usr/local/lib/wdtt/protocols.py
-        exit 1
-    }
+    status=$(python3 -c 'import json,sys; s=json.load(open("/etc/wdtt/protocols/state.json")); n=sys.argv[1]; print("enabled" if s["profiles"].get(n) and not s.get("disabled",{}).get(n) else "disabled" if n in s["profiles"] else "new")' "$protocol")
+    case "$status" in
+        enabled) systemctl restart "wdtt-protocol@$protocol";;
+        disabled) continue;;
+        new) printf '{"op":"create","protocol":"%s","host":"%s"}\n' "$protocol" "$PUBLIC_IP" | python3 /usr/local/lib/wdtt/protocols.py;;
+    esac
 done
 systemctl enable --now wdtt-protocol-watch
 systemctl restart wdtt-protocol-watch
@@ -191,28 +205,26 @@ done
 
 if [[ "$MODE" == selfsigned ]]; then
     CERT=/etc/wdtt/panel-cert.pem; KEY=/etc/wdtt/panel-key.pem
-    openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=$PUBLIC_IP" -addext "subjectAltName=IP:$PUBLIC_IP" -keyout "$KEY" -out "$CERT"
+    python3 "$SOURCE_DIR/scripts/certificates.py" selfsigned "$PANEL_HOST" "$CERT" "$KEY"
 elif [[ "$MODE" == certbot ]]; then
     CERT=/etc/letsencrypt/live/$PANEL_HOST/fullchain.pem; KEY=/etc/letsencrypt/live/$PANEL_HOST/privkey.pem
-    if [[ ! -f "$CERT" ]]; then
-        mkdir -p /var/lib/wdtt-acme
-        printf 'server { listen 80; server_name %s; location /.well-known/acme-challenge/ { root /var/lib/wdtt-acme; } }\n' "$PANEL_HOST" > /etc/nginx/conf.d/wdtt-panel-acme.conf
-        nginx -t
-        systemctl reload nginx
-        certbot certonly --non-interactive --agree-tos --register-unsafely-without-email --webroot -w /var/lib/wdtt-acme -d "$PANEL_HOST"
-    fi
-    install -d /etc/letsencrypt/renewal-hooks/deploy
-    printf '#!/bin/sh\nnginx -t && systemctl reload nginx\n' >/etc/letsencrypt/renewal-hooks/deploy/wdtt-panel
-    chmod 755 /etc/letsencrypt/renewal-hooks/deploy/wdtt-panel
-    systemctl enable --now certbot.timer
+    python3 "$SOURCE_DIR/scripts/certificates.py" certbot "$PANEL_HOST" "$CERT" "$KEY"
+fi
+if [[ "$MODE" != http ]]; then
+    python3 "$SOURCE_DIR/scripts/certificates.py" validate "$PANEL_HOST" "$CERT" "$KEY"
 fi
 python3 "$SOURCE_DIR/scripts/configure-nginx.py" --host "$PANEL_HOST" --port "$EXTERNAL_PORT" --backend "$WDTT_BACKEND_PORT" --subport "$WDTT_SUB_PORT" --mode "$MODE" --cert "$CERT" --key "$KEY"
-iptables -w -C INPUT -p tcp --dport "$EXTERNAL_PORT" -m comment --comment WDTT_PANEL -j ACCEPT 2>/dev/null || iptables -w -I INPUT -p tcp --dport "$EXTERNAL_PORT" -m comment --comment WDTT_PANEL -j ACCEPT
-cat >/usr/local/lib/wdtt/panel-firewall.sh <<FIREWALL
-#!/bin/sh
-iptables -w -C INPUT -p tcp --dport $EXTERNAL_PORT -m comment --comment WDTT_PANEL -j ACCEPT 2>/dev/null || iptables -w -I INPUT -p tcp --dport $EXTERNAL_PORT -m comment --comment WDTT_PANEL -j ACCEPT
-FIREWALL
-chmod 755 /usr/local/lib/wdtt/panel-firewall.sh
+export WDTT_TLS_MODE="$MODE" WDTT_PANEL_HOST="$PANEL_HOST" WDTT_PUBLIC_IP="$PUBLIC_IP" WDTT_EXTERNAL_PORT="$EXTERNAL_PORT" WDTT_CERT_FILE="$CERT" WDTT_KEY_FILE="$KEY"
+python3 - <<'PYSETTINGS'
+import os,json
+from pathlib import Path
+keys=['WDTT_TLS_MODE','WDTT_PANEL_HOST','WDTT_PUBLIC_IP','WDTT_EXTERNAL_PORT','WDTT_CERT_FILE','WDTT_KEY_FILE','WDTT_BACKEND_PORT','WDTT_SUB_PORT']
+Path('/etc/wdtt/installation.json').write_text(json.dumps({k:os.environ[k] for k in keys}))
+PYSETTINGS
+install -m 755 "$SOURCE_DIR/scripts/uninstall.py" /usr/local/lib/wdtt/uninstall.py
+printf '#!/bin/sh\nexec python3 /usr/local/lib/wdtt/uninstall.py "$@"\n' > /usr/local/bin/wdtt-panel-uninstall
+chmod 755 /usr/local/bin/wdtt-panel-uninstall
+install -m 755 "$SOURCE_DIR/scripts/panel-firewall.py" /usr/local/lib/wdtt/panel-firewall.py
 cat >/etc/systemd/system/wdtt-panel-firewall.service <<'UNIT'
 [Unit]
 Description=WDTT Panel external port
@@ -220,16 +232,15 @@ After=network-online.target ufw.service nftables.service
 Before=nginx.service
 [Service]
 Type=oneshot
-ExecStart=/usr/local/lib/wdtt/panel-firewall.sh
+ExecStart=/usr/bin/python3 /usr/local/lib/wdtt/panel-firewall.py
 RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now wdtt-panel-firewall
-for port in 56000 56001 56003; do
-    iptables -w -C INPUT -p udp --dport "$port" -m comment --comment WDTT_PANEL -j ACCEPT 2>/dev/null || iptables -w -I INPUT -p udp --dport "$port" -m comment --comment WDTT_PANEL -j ACCEPT
-done
+systemctl restart wdtt-panel-firewall
+
 echo 'Установка завершена. Логин и пароль: /etc/wdtt/install-credentials (доступ только root).'
 echo "Панель: $WDTT_PUBLIC_URL/wdtt/"
 if [[ -f /etc/wdtt/protocols/default-subscription-id ]]; then

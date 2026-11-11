@@ -116,7 +116,7 @@ func handleConn(ctx context.Context, clientConn net.Conn, wgEndpoint string, wgD
 		entry, isGenPass := db.Passwords[password]
 		valid := isMainPass || (isGenPass && !isPasswordExpired(entry) && !isTrafficExceeded(entry))
 
-		if valid && isGenPass && entry.IsDeactivated {
+		if valid && isGenPass && (entry.IsDeactivated || entry.NativeDisabled) {
 			clientConn.Write([]byte("DENIED:deactivated"))
 			log.Printf("[WG] Отказ: пароль %s деактивирован, запрос от %s", maskPassword(password), deviceID)
 			dbMutex.Unlock()
@@ -344,7 +344,7 @@ func handleConn(ctx context.Context, clientConn net.Conn, wgEndpoint string, wgD
 		if !ok || e == nil {
 			return true
 		}
-		return !isTrafficExceeded(e) && !e.IsDeactivated
+		return !isTrafficExceeded(e) && !(e.IsDeactivated || e.NativeDisabled)
 	}
 	go func() {
 		t := time.NewTicker(time.Second)

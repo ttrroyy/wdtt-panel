@@ -2,6 +2,7 @@ package panel
 
 import (
 	"encoding/json"
+	"github.com/ildarmaga/wdtt/pkg/paneldb"
 	"os"
 )
 
@@ -26,4 +27,17 @@ func loadProtocolSubscription(id string) (protocolSubscription, bool) {
 	}
 	value, ok := all[id]
 	return value, ok
+}
+
+func userHasProtocol(id, protocol string) bool {
+	protocols, err := paneldb.UserProtocols(panelDB, id)
+	if err != nil {
+		return false
+	}
+	for _, name := range protocols {
+		if name == protocol {
+			return true
+		}
+	}
+	return false
 }

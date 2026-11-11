@@ -28,18 +28,18 @@ type PasswordEntry struct {
 	DeviceID      string   `json:"device_id,omitempty"`
 	DeviceIDs     []string `json:"device_ids,omitempty"`
 	MaxDevices    int      `json:"max_devices,omitempty"`
-	ExpiresAt     int64   `json:"expires_at"`
-	DownBytes     int64   `json:"down_bytes"`
-	UpBytes       int64   `json:"up_bytes"`
-	TotalBytes    int64   `json:"total_bytes,omitempty"`
-	MaxDownMBps   float64 `json:"max_down_mbps,omitempty"`
-	MaxUpMBps     float64 `json:"max_up_mbps,omitempty"`
-	IsDeactivated bool    `json:"is_deactivated,omitempty"`
-	Comment       string  `json:"comment,omitempty"`
-	Ports         string  `json:"ports,omitempty"`
-	VkHash        string  `json:"vk_hash,omitempty"`
-	SubID         string  `json:"sub_id,omitempty"`
-	LastSeenAt    int64   `json:"last_seen_at,omitempty"`
+	ExpiresAt     int64    `json:"expires_at"`
+	DownBytes     int64    `json:"down_bytes"`
+	UpBytes       int64    `json:"up_bytes"`
+	TotalBytes    int64    `json:"total_bytes,omitempty"`
+	MaxDownMBps   float64  `json:"max_down_mbps,omitempty"`
+	MaxUpMBps     float64  `json:"max_up_mbps,omitempty"`
+	IsDeactivated bool     `json:"is_deactivated,omitempty"`
+	Comment       string   `json:"comment,omitempty"`
+	Ports         string   `json:"ports,omitempty"`
+	VkHash        string   `json:"vk_hash,omitempty"`
+	SubID         string   `json:"sub_id,omitempty"`
+	LastSeenAt    int64    `json:"last_seen_at,omitempty"`
 }
 
 const oneGB = 1024 * 1024 * 1024
@@ -537,6 +537,9 @@ func resetUserTraffic(pass string) error {
 	}
 	if _, ok := db.Passwords[pass]; !ok {
 		return fmt.Errorf("пользователь не найден")
+	}
+	if err := resetProtocolUserTraffic(db.Passwords[pass].SubID); err != nil {
+		return err
 	}
 	if err := resetUserTrafficNorm(pass); err != nil {
 		return err

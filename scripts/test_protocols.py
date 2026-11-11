@@ -57,18 +57,54 @@ class ProtocolTests(unittest.TestCase):
             for _,network,_ in p.protocol_ingress(name):
                 self.assertNotIn(ipaddress.ip_address('10.253.1.2'),ipaddress.ip_network(network))
 
-    def test_default_subscription_is_idempotent_and_respects_user_deletion(self):
+    def test_main_subscription_seed_is_read_only(self):
         with sqlite3.connect(Path(self.temp.name)/'panel.db') as db:
-            db.execute('CREATE TABLE settings(key TEXT,value TEXT)')
-            db.execute('CREATE TABLE wdtt_users(password TEXT,sub_id TEXT,comment TEXT,vk_hash TEXT)')
-            db.execute("INSERT INTO settings VALUES('default_subscription_password','native-password')")
-            db.execute("INSERT INTO wdtt_users VALUES('native-password','sub-token','Default','')")
-        with patch.object(p,'create_user',side_effect=lambda name,data:{'password':name+'-password'}) as create:
-            first=p.seed_default_subscription();second=p.seed_default_subscription()
-            self.assertEqual(first,second);self.assertEqual(create.call_count,5)
-            with sqlite3.connect(Path(self.temp.name)/'panel.db') as db:db.execute('DELETE FROM wdtt_users')
-            self.assertEqual(p.seed_default_subscription(),{})
-            self.assertEqual(create.call_count,5)
+            db.execute('CREATE TABLE wdtt_global(id INTEGER, main_password TEXT)')
+            db.execute('CREATE TABLE wdtt_users(password TEXT,sub_id TEXT)')
+            db.execute("INSERT INTO wdtt_global VALUES(1,'owner')")
+            db.execute("INSERT INTO wdtt_users VALUES('owner','owner-sub')")
+        with patch.object(p,'create_user') as create:
+            self.assertEqual(p.seed_default_subscription(),{'sub_id':'owner-sub'})
+            self.assertEqual(p.seed_default_subscription(),{'sub_id':'owner-sub'})
+            create.assert_not_called()
+
+
+    def test_unified_user_has_one_route_choice_for_all_memberships(self):
+        master=dict(sub_id='identity',password='native',comment='Person',vk_hash='',expires_at=0,is_deactivated=0,
+                    total_bytes=0,up_bytes=0,down_bytes=0,max_down_mbps=0,max_up_mbps=0,max_devices=1)
+        members={'qwdtt':'q-password','freeturn':'f-password'}
+        with p.locked():
+            state=p.state();state['profiles']={name:True for name in p.PROFILES}
+            state['bundles']={'identity':{'members':members}};p.save(state)
+        rows={name:[dict(password=password,enabled=True,name='Person',link='link',up_bytes=0,down_bytes=0)] for name,password in members.items()}
+        with patch.object(p,'native_users',return_value=[master]), patch.object(p,'selected_protocols',return_value=list(members)), patch.object(p,'mutate_user'), patch.object(p,'enabled_user') as toggle:
+            options,errors=p.sync_subscription_bundles(rows)
+            self.assertEqual(errors,[])
+            self.assertEqual(options,[{'tag':'vpn-user-identity','label':'Person'}])
+            aliases=json.loads((p.ROOT/'user-route-aliases.json').read_text())
+            self.assertEqual(set(aliases['vpn-user-identity']),{'vpn-'+n+'-user-'+p.user_id(n,pw) for n,pw in members.items()})
+            toggle.assert_not_called()
+        with patch.object(p,'native_users',return_value=[master]), patch.object(p,'selected_protocols',return_value=['freeturn']), patch.object(p,'mutate_user'), patch.object(p,'enabled_user') as toggle:
+            p.sync_subscription_bundles(rows)
+            toggle.assert_called_once_with('qwdtt','q-password',False)
+            subscription=json.loads((p.ROOT.parent/'protocol-subscriptions.json').read_text())['identity']
+            self.assertEqual([c['protocol'] for c in subscription['connections']],['freeturn'])
+
+    def test_global_traffic_reset_is_idempotent(self):
+        with p.locked():
+            state=p.state();state['bundles']={'identity':{'members':{}}};p.save(state)
+        p.atomic(p.ROOT.parent/'protocol-subscriptions.json',{'identity':{'raw_up_bytes':100,'raw_down_bytes':200,'up_bytes':40,'down_bytes':50}})
+        for _ in range(2):
+            p.api({'op':'reset-user-traffic','sub_id':'identity'})
+            self.assertEqual(p.state()['bundles']['identity']['traffic_offsets'],{'up_bytes':100,'down_bytes':200})
+
+    def test_csqtt_links_use_upstream_encoding(self):
+        for name in ('csqtt-2.1.9','csqtt-2.5.0'):
+            original='csqtt://original-encrypted-payload'
+            with patch.object(p,'users',return_value=[dict(password='p@ss',vk_hash='abc+def,second/hash',link=original)]), patch.object(p,'settings',return_value={'secret':'owner','host':'vpn.example'}):
+                row=p.display_users(name)[0]
+            if name=='csqtt-2.5.0': self.assertEqual(row['link'],original)
+            else: self.assertEqual(row['link'],'csqtt://connect?v=2&host=vpn.example&peer=56300&password=p%40ss&hashes=abc%2Bdef+second%2Fhash')
 
     def test_csqtt_does_not_send_duplicate_serde_aliases(self):
         for name,key,absent in [('csqtt-2.1.9','dtls_port','peer_port'),('csqtt-2.5.0','peer_port','dtls_port')]:

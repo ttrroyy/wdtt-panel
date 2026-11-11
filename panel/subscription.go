@@ -289,7 +289,7 @@ func (a *App) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	bundleLinks, bundleTitles := []string{}, []string{}
 	if bundled {
-		if inbound.Enable {
+		if inbound.Enable && userHasProtocol(info.Entry.SubID, "wdtt") {
 			bundleLinks = append(bundleLinks, link)
 			bundleTitles = append(bundleTitles, "WDTT")
 		}
