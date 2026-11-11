@@ -17,6 +17,7 @@ def load(name,filename):
 
 p=load('protocols','protocols.py')
 nginx=load('configure_nginx','configure-nginx.py')
+firewall=load('panel_firewall','panel-firewall.py')
 
 
 class ProtocolTests(unittest.TestCase):
@@ -119,6 +120,36 @@ class ProtocolTests(unittest.TestCase):
         updated=p.settings('qwdtt')
         self.assertEqual(updated['secret'],original['secret']);self.assertEqual(updated['admin_token'],original['admin_token'])
         self.assertEqual(updated['dns'],'8.8.8.8,1.1.1.1')
+
+    def test_firewall_tracks_configured_protocol_ports(self):
+        rules=firewall.rules('CHAIN','ens3',[57500,58000])
+        udp=[line for line in rules if '-p udp' in line]
+        self.assertEqual(len(udp),1)
+        self.assertIn('--dports 57500,58000',udp[0])
+        self.assertFalse(any('-p udp' in line for line in firewall.rules('CHAIN','ens3',[])))
+        self.assertTrue(any('22,80,443' in line for line in rules))
+
+    def test_original_settings_catalog_and_protected_parameters(self):
+        expected={'qwdtt':['direct_port','raw_port'],'wdtt-plus':['max_handshakes','handshake_rate','wg_backend'],'csqtt-2.1.9':['fec','secure_cookie'],'csqtt-2.5.0':['secure_cookie'],'freeturn':['obf_profile','obf_timing_ms','mtu','debug']}
+        for name,keys in expected.items():
+            fields={field['key']:field for section in p.settings_sections(name) for field in section['fields']}
+            self.assertTrue(all(key in fields and not fields[key].get('readonly') for key in keys))
+            self.assertTrue(fields['subnet']['readonly']);self.assertTrue(fields['tag']['readonly'])
+        self.assertEqual(next(f['value'] for section in p.settings_sections('csqtt-2.5.0') for f in section['fields'] if f['key']=='mtu'),1500)
+
+    def test_transport_ports_reject_overlap_and_remain_in_original_links(self):
+        for name in ('qwdtt','freeturn'):
+            folder=p.directory(name);folder.mkdir(parents=True);p.atomic(folder/'settings.json',{'host':'vpn.example'})
+        with p.locked():
+            state=p.state();state['profiles']={'qwdtt':True,'freeturn':True};p.save(state)
+        with self.assertRaisesRegex(ValueError,'занят инбаундом'):
+            p.profile_update('freeturn',{'port':56100})
+        with self.assertRaisesRegex(ValueError,'должны отличаться'):
+            p.profile_update('qwdtt',{'raw_port':56100})
+        with patch.object(p,'run',return_value=''):
+            p.profile_update('qwdtt',{'port':57100,'wg_port':57101,'raw_port':57103,'direct_port':57102,'client_port':9010})
+        self.assertEqual(p.spec('qwdtt')['port'],57100)
+        self.assertEqual(p.published_ports('qwdtt'),[57100,57102,57103])
 
     def test_profile_settings_roll_back_failed_restart(self):
         folder=p.directory('qwdtt');folder.mkdir(parents=True)

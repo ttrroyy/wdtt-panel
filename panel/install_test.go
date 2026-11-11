@@ -36,8 +36,22 @@ func TestInstallationCreatesOneStableDefaultSubscription(t *testing.T) {
 		t.Fatal("owner or default subscription not seeded")
 	}
 	id := first.Users[password].SubID
+	inbound, err := loadWdttInbound()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbound.MaxUsers = 123
+	inbound.ServerHost = "vpn.example.com"
+	if err := saveWdttInbound(inbound); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := ConfigureInstallation(); err != nil {
 		t.Fatal(err)
+	}
+	restored, err := loadWdttInbound()
+	if err != nil || restored.MaxUsers != 123 || restored.ServerHost != "vpn.example.com" {
+		t.Fatal("reinstall reset inbound settings", err)
 	}
 	second, err := paneldb.LoadStore(panelDB)
 	if err != nil {

@@ -118,7 +118,7 @@ import os,runpy,sqlite3,json,sys
 from pathlib import Path
 with sqlite3.connect('/etc/wdtt/panel.db') as db:
     db.execute('UPDATE panel_config SET web_listen=?,sub_listen=?',('127.0.0.1','127.0.0.1'))
-    db.execute('UPDATE wdtt_inbound SET server_host=?,max_users=65023',(os.environ['PUBLIC_IP'],))
+    db.execute("UPDATE wdtt_inbound SET server_host=CASE WHEN server_host='' THEN ? ELSE server_host END",(os.environ['PUBLIC_IP'],))
 cfg=Path('/etc/wdtt-xray/config.json'); cfg.parent.mkdir(exist_ok=True)
 if not cfg.exists():
     cfg.write_text(json.dumps({'log':{'loglevel':'warning'},'inbounds':[], 'outbounds':[{'tag':'direct','protocol':'freedom','settings':{}},{'tag':'blocked','protocol':'blackhole','settings':{}}],'routing':{'rules':[]}}))

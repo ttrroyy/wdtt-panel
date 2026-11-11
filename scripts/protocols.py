@@ -73,7 +73,106 @@ def save(s):
 def spec(name):
     if name not in PROFILES:
         raise ValueError('Неизвестный протокол')
-    return PROFILES[name]
+    result=dict(PROFILES[name])
+    path=ROOT/name/"settings.json"
+    if name!="wdtt" and path.exists(): result["port"]=json.loads(path.read_text()).get("port",result["port"])
+    return result
+
+
+def protocol_config(name,cfg=None):
+    original=PROFILES[name]
+    if cfg is None:
+        try:cfg=settings(name)
+        except FileNotFoundError:cfg={}
+    port=cfg.get('port',original['port'])
+    values=dict(port=port,wg_port=port+1,client_port=9000,listen_host='0.0.0.0',dns='',
+                direct_enabled=True,raw_enabled=True,direct_port=port+2,raw_port=port+3,
+                max_users=65023,max_workers_per_access=0,max_handshakes=32,handshake_rate=24,
+                max_client_mbps=0,wg_backend='userspace',fec='safe',secure_cookie=False,
+                mtu=1300 if name=='csqtt-2.1.9' else 1500 if name=='csqtt-2.5.0' else 1280,obf_profile='rtpopus3',obf_timing_ms=0,debug=False)
+    values.update(cfg)
+    return values
+
+
+def native_ports():
+    path=ROOT.parent/'panel.db'
+    if path.exists():
+        with sqlite3.connect(path,timeout=5) as db:
+            row=db.execute('SELECT dtls_port,wg_port,raw_enable,raw_direct_port FROM wdtt_inbound WHERE id=1').fetchone()
+            if row:return [row[0],row[1]]+([row[3] or row[0]+3] if row[2] else [])
+    return [56000,56001,56003]
+
+
+def published_ports(name,cfg=None):
+    if name=='wdtt':return native_ports()
+    values=protocol_config(name,cfg)
+    ports=[values['port']]
+    if name=='qwdtt':
+        if values['direct_enabled']:ports.append(values['direct_port'])
+        if values['raw_enabled']:ports.append(values['raw_port'])
+    return ports
+
+
+def validate_profile_ports(name,cfg,previous=None):
+    ports=published_ports(name,cfg)
+    internal=ports+([cfg['wg_port']] if name in ('qwdtt','wdtt-plus','freeturn') else [])
+    if len(set(internal))!=len(internal):raise ValueError('UDP-порты одного инбаунда должны отличаться')
+    with locked():present=state()['profiles']
+    for other in PROFILES:
+        if other==name or not present.get(other):continue
+        if set(ports)&set(published_ports(other)):raise ValueError('UDP-порт уже занят инбаундом '+PROFILES[other]['name'])
+    added=set(ports)-set(published_ports(name,previous) if previous is not None else [])
+    if added:
+        text=run('ss','-H','-lun')
+        occupied={int(match[1]) for line in text.splitlines() if len(parts:=line.split())>=5 and (match:=re.search(r':(\d+)$',parts[-2]))}
+        if added&occupied:raise ValueError('UDP-порт занят другим процессом: '+str(min(added&occupied)))
+
+
+def refresh_firewall():
+    path=Path('/usr/local/lib/wdtt/panel-firewall.py')
+    if ROOT==Path('/etc/wdtt/protocols') and path.exists():run('python3',path)
+
+
+def settings_sections(name):
+    cfg=protocol_config(name);p=PROFILES[name]
+    def field(key,label,kind='text',default='',**options):
+        return dict(key=key,label=label,type=kind,value=cfg.get(key,default),**options)
+    def number(key,label,default,minimum,maximum,**options):
+        return field(key,label,'number',default,min=minimum,max=maximum,**options)
+    fixed='Параметр закреплён для изоляции инбаундов и сохранения маршрутизации.'
+    original='В этой версии оригинального сервера параметр задан в коде.'
+    common=[field('enabled','Включить','switch',True),field('remark','Примечание',default=p['name']),
+            field('tag','Тег',default='vpn-'+name,readonly=True,help=fixed),
+            field('listen_host','Адрес прослушивания',help='0.0.0.0 или 10.253.'+str(p['index'])+'.2'),
+            field('host','Адрес в ссылке',help='IPv4 или домен без порта и пути.'),
+            number('port','UDP-порт' if name.startswith('csqtt') else 'DTLS порт',p['port'],1024,65531,help='После смены порта обновите клиентские конфиги.')]
+    if name in ('qwdtt','wdtt-plus','freeturn'):common.append(number('wg_port','WireGuard порт',p['port']+1,1024,65535))
+    if name!='wdtt':common.append(number('client_port','Порт клиента',9000,1024,65535,help='Локальный порт клиента. Обновите его конфигурацию после изменения.'))
+    common += [field('dns','DNS клиента',help='Один или два IPv4 через запятую; пусто — DNS сервера.'),
+               field('subnet','Подсеть',default=f'10.{p["pool"]}.0.0/16',readonly=True,help=fixed)]
+    sections=[{'title':'Основное','fields':common}]
+    if name=='qwdtt':
+        common.append(number('mtu','MTU WireGuard',1280,1280,1280,readonly=True,help=original))
+        sections.append({'title':'Direct / RAW','fields':[field('direct_enabled','Direct WRAP','switch',True),number('direct_port','Direct UDP порт',p['port']+2,1024,65535),field('raw_enabled','Режим RAW','switch',True),number('raw_port','RAW UDP порт',p['port']+3,1024,65535),field('raw_subnet','Подсеть RAW',default='10.73.0.0/16',readonly=True,help=fixed),number('raw_mtu','MTU RAW',1300,1300,1300,readonly=True,help=original)]})
+        advanced=[number('max_users','Лимит пользователей',65023,65023,65023,readonly=True,help=original),number('handshake_timeout','DTLS handshake, сек',60,60,60,readonly=True,help=original)]
+    elif name=='wdtt-plus':
+        common.append(number('mtu','MTU',1280,1280,1280,readonly=True,help=original))
+        advanced=[number('max_users','Лимит пользователей',65023,1,65023),number('max_workers_per_access','DTLS-воркеров на доступ',0,0,128,help='0 — без ограничения.'),number('max_handshakes','Одновременных handshake',32,1,256),number('handshake_rate','Handshake в секунду',24,1,1000),number('max_client_mbps','Мбит/с на доступ',0,0,1000,help='Общий серверный лимит; 0 — безлимит.'),field('wg_backend','WireGuard backend','select','userspace',options=['auto','kernel','userspace'])]
+    elif name.startswith('csqtt'):
+        common.append(number('mtu','MTU TUN',1300 if name=='csqtt-2.1.9' else 1500,0,1500,readonly=True,help=original))
+        advanced=[field('secure_cookie','Secure cookie','switch',False,help='Cookie служебного HTTPS API.')]
+        if name=='csqtt-2.1.9':advanced.insert(0,field('fec','Selective FEC','select','safe',options=['safe','off']))
+    else:
+        common.append(number('mtu','MTU WireGuard',1280,576,1500))
+        advanced=[field('mode','Режим туннеля',default='udp',readonly=True,help='Для WireGuard требуется UDP.'),field('connect','WireGuard backend',default=f'127.0.0.1:{cfg["wg_port"]}',readonly=True,help=fixed),field('obf_profile','Профиль обфускации','select','rtpopus3',options=['none','rtpopus','rtpopus2','rtpopus3']),number('obf_timing_ms','Пейсинг обфускации, мс',0,0,1000),field('obf_key_mask','Ключ обфускации',default='Управляется панелью',readonly=True,help='Ключ сохраняется вместе с подключениями.'),field('debug','Debug-журнал','switch',False)]
+    if name in ('qwdtt','wdtt-plus','freeturn'):
+        advanced.append(number('wg_keepalive','WG keepalive, сек',25,25,25,readonly=True,help=original if name!='freeturn' else fixed))
+    if name=='wdtt-plus':advanced.extend([number('handshake_timeout','DTLS handshake, сек',30,30,30,readonly=True,help=original),number('idle_timeout','Тайм-аут DTLS, сек',90,90,90,readonly=True,help=original)])
+    if name.startswith('csqtt'):advanced.append(number('max_users','Лимит пользователей',65023,65023,65023,readonly=True,help=original))
+    if name in ('qwdtt','csqtt-2.1.9','csqtt-2.5.0'):
+        advanced.append(field('admin_addr','Admin HTTPS',default=f'10.253.{p["index"]}.2:{cfg["port"]+(4 if name=="qwdtt" else 2)}',readonly=True,help=fixed))
+    sections.append({'title':'Расширенные','fields':advanced})
+    return sections
 
 
 def directory(name):
@@ -131,7 +230,7 @@ def net_up(name):
     ipt('nat','POSTROUTING','-s',ns_ip+'/32','!','-o',host,'-j','MASQUERADE')
     ipt('filter','FORWARD','-i',host,'-j','ACCEPT')
     ipt('filter','FORWARD','-o',host,'-m','conntrack','--ctstate','ESTABLISHED,RELATED','-j','ACCEPT')
-    ports=[p['port']] + ([p['port']+2,p['port']+3] if name=='qwdtt' else [])
+    ports=published_ports(name)
     for port in ports:
         ipt('nat','PREROUTING','-m','addrtype','--dst-type','LOCAL','-p','udp','--dport',str(port),'-j','DNAT','--to-destination',f'{ns_ip}:{port}')
         ipt('filter','FORWARD','-o',host,'-p','udp','-d',ns_ip,'--dport',str(port),'-j','ACCEPT')
@@ -169,35 +268,40 @@ def setup(name, public_host):
 
 
 def serve(name):
-    p=spec(name); d=directory(name); cfg=settings(name); port=p['port']
+    p=spec(name); d=directory(name); cfg=protocol_config(name); port=p['port']
     net_up(name)
     (d/'bandwidth.signature').unlink(missing_ok=True)
     env=dict(os.environ)
     if name=='qwdtt':
-        args=[BIN/name,'-listen',f'0.0.0.0:{port}','-wg-port',str(port+1),'-listen-direct',f'0.0.0.0:{port+2}',
-              '-listen-raw',f'0.0.0.0:{port+3}','-config-dir',d,'-password-file',d/'owner-password',
+        args=[BIN/name,'-listen',f'{cfg["listen_host"]}:{port}','-wg-port',str(cfg['wg_port']),'-listen-direct',f'{cfg["listen_host"]}:{cfg["direct_port"]}' if cfg['direct_enabled'] else '',
+              '-listen-raw',f'{cfg["listen_host"]}:{cfg["raw_port"]}' if cfg['raw_enabled'] else '','-config-dir',d,'-password-file',d/'owner-password',
               '-admin-listen',f'0.0.0.0:{port+4}','-admin-token-file',d/'admin-token','-admin-cert',d/'web_cert.pem','-admin-key',d/'web_key.pem']
     elif name=='wdtt-plus':
-        args=[BIN/name,'-listen',f'0.0.0.0:{port}','-wg-port',str(port+1),'-config-dir',d,
-              '-max-passwords','65023','-max-client-mbps','0','-wg-backend','userspace']
+        args=[BIN/name,'-listen',f'{cfg["listen_host"]}:{port}','-wg-port',str(cfg['wg_port']),'-config-dir',d,
+              '-max-passwords',str(cfg['max_users']),'-max-client-mbps',str(cfg['max_client_mbps']),'-wg-backend',cfg['wg_backend'],
+              '-max-workers-per-access',str(cfg['max_workers_per_access']),'-max-handshakes',str(cfg['max_handshakes']),'-handshake-rate',str(cfg['handshake_rate'])]
         if not (d/'passwords.json').exists():
             atomic(d/'passwords.json',{'main_password':cfg['secret'],'dns':'1.1.1.1','max_passwords':65023,
-                                     'default_ports':f'{port},{port+1},9000','public_ip':cfg['host'],'passwords':{},'devices':{}})
+                                     'default_ports':f'{port},{cfg["wg_port"]},{cfg["client_port"]}','public_ip':cfg['host'],'passwords':{},'devices':{}})
     elif name.startswith('csqtt'):
-        args=[BIN/name,'--listen',f'0.0.0.0:{port}','--web-port',str(port+2),'--config-dir',d]
+        args=[BIN/name,'--listen',f'{cfg["listen_host"]}:{port}','--web-port',str(port+2),'--config-dir',d]
         env.update(CSQTT_MAIN_PASSWORD=cfg['secret'],CSQTT_WEB_USER='admin',CSQTT_WEB_PASS=cfg['admin_token'],
                    CSQTT_PUBLIC_IP=cfg['host'],CSQTT_WEB_SECRET_PATH='')
     elif name=='freeturn':
         nsrun(name,'ip','link','add','ftwg0','type','wireguard',check=False)
         nsrun(name,'ip','addr','replace','10.72.66.1/16','dev','ftwg0')
-        nsrun(name,'wg','set','ftwg0','private-key',d/'wg-private','listen-port',str(port+1))
-        nsrun(name,'ip','link','set','ftwg0','mtu','1280','up')
+        nsrun(name,'wg','set','ftwg0','private-key',d/'wg-private','listen-port',str(cfg['wg_port']))
+        nsrun(name,'ip','link','set','ftwg0','mtu',str(cfg['mtu']),'up')
         ipt('filter','FORWARD','-i','ftwg0','-j','ACCEPT',ns=name)
         ipt('filter','FORWARD','-o','ftwg0','-j','ACCEPT',ns=name)
-        args=[BIN/name,'-listen',f'0.0.0.0:{port}','-connect',f'127.0.0.1:{port+1}','-mode','udp',
-              '-obf-profile','rtpopus3','-obf-key',cfg['obf_key'],'-clients-file',d/'clients.json']
+        args=[BIN/name,'-listen',f'{cfg["listen_host"]}:{port}','-connect',f'127.0.0.1:{cfg["wg_port"]}','-mode','udp',
+              '-obf-profile',cfg['obf_profile'],'-obf-key',cfg['obf_key'],'-obf-timing',str(cfg['obf_timing_ms'])+'ms','-clients-file',d/'clients.json']
     else:
         raise ValueError('WDTT runs in the unified panel process')
+    if name.startswith('csqtt'):
+        args += ['--secure-cookie'] if cfg['secure_cookie'] else []
+        if name=='csqtt-2.1.9':args += ['--fec',cfg['fec']]
+    if name=='freeturn' and cfg['debug']:args += ['-debug']
     if cfg.get('dns') and name!='freeturn': args += ['--dns' if name.startswith('csqtt') else '-dns',cfg['dns']]
     child=subprocess.Popen(['ip','netns','exec',namespace(name),*[str(a) for a in args]],env=env)
     def stop(*_):
@@ -333,7 +437,7 @@ def display_users(name):
     rows=users(name)
     with locked():
         saved=state()['users'].get(name,{})
-    cfg=settings(name) if name!='wdtt' else {}
+    cfg=protocol_config(name) if name!='wdtt' else {}
     if name!='wdtt': rows=[row for row in rows if row['password']!=cfg['secret']]
     port=spec(name)['port']
     for row in rows:
@@ -349,9 +453,9 @@ def display_users(name):
         row['enabled']=not row.get('is_deactivated',False) and row.get('active',True) and row.get('status','active')=='active' and not (row.get('expires_at',0) and row['expires_at']<=time.time())
         if name=='qwdtt':
             row['link']='qwdtt://config?'+urllib.parse.urlencode({'name':row['name'],'peer':f'{cfg["host"]}:{port}','pass':password,
-                                                              'hashes':row.get('vk_hash',''),'workers':9,'port':9000})
+                                                              'hashes':row.get('vk_hash',''),'workers':9,'port':cfg['client_port']})
         elif name=='wdtt-plus':
-            row['link']=f'wdtt://{cfg["host"]}:{port}:{port+1}:9000:{password}:{row.get("vk_hash","")}'
+            row['link']=f'wdtt://{cfg["host"]}:{port}:{cfg["wg_port"]}:{cfg["client_port"]}:{password}:{row.get("vk_hash","")}'
         elif name=='csqtt-2.5.0':
             # Use the original server's encrypted URI, including its original hash encoding.
             if not row.get('link','').startswith('csqtt://'): raise ValueError('Сервер CSQTT не вернул ссылку')
@@ -360,9 +464,10 @@ def display_users(name):
             hashes=[value.strip() for value in (row.get('vk_hashes') or row.get('vk_hash','')).split(',') if value.strip()]
             if hashes: row['link']+='&hashes='+'+'.join(urllib.parse.quote(value,safe='') for value in hashes)
         elif name=='freeturn':
-            payload={'v':1,'provider':'vk','mode':'udp','transport':'tcp','peer':f'{cfg["host"]}:{port}','obf':'rtpopus3','key':cfg['obf_key'],'cid':password,'name':row['name']}
-            row['wg_config']=f'[Interface]\nPrivateKey = {meta["private_key"]}\nAddress = {meta["ip"]}/32\nDNS = {cfg.get("dns") or "1.1.1.1"}\nMTU = 1280\n\n[Peer]\nPublicKey = {(directory(name)/"wg-public").read_text().strip()}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 127.0.0.1:9000\nPersistentKeepalive = 25\n'
-            payload['wg']=row['wg_config'];payload['listen']='127.0.0.1:9000'
+            payload={'v':1,'provider':'vk','mode':'udp','transport':'tcp','peer':f'{cfg["host"]}:{port}','cid':password,'name':row['name']}
+            row['wg_config']=f'[Interface]\nPrivateKey = {meta["private_key"]}\nAddress = {meta["ip"]}/32\nDNS = {cfg.get("dns") or "1.1.1.1"}\nMTU = {cfg["mtu"]}\n\n[Peer]\nPublicKey = {(directory(name)/"wg-public").read_text().strip()}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 127.0.0.1:{cfg["client_port"]}\nPersistentKeepalive = 25\n'
+            payload['wg']=row['wg_config'];payload['listen']=f'127.0.0.1:{cfg["client_port"]}'
+            if cfg['obf_profile']!='none':payload.update(obf=cfg['obf_profile'],key=cfg['obf_key'],timing=cfg['obf_timing_ms'])
             hashes=[value.strip() for value in meta.get('vk_hash','').split(',') if value.strip()]
             if hashes: payload['vk']=','.join(value if '://' in value else 'https://vk.com/call/join/'+value for value in hashes)
             row['link']='freeturn://'+base64.urlsafe_b64encode(json.dumps(payload,separators=(',',':'),ensure_ascii=False).encode()).decode().rstrip('=')
@@ -370,7 +475,7 @@ def display_users(name):
 
 
 def create_user(name, data):
-    p=spec(name); days=int(data.get('days',0)); total=int(data.get('total_bytes',0)); speed=float(data.get('max_mbps',0))
+    p=spec(name); cfg=protocol_config(name) if name!='wdtt' else {}; days=int(data.get('days',0)); total=int(data.get('total_bytes',0)); speed=float(data.get('max_mbps',0))
     if not 0<=days<=365 or total<0 or speed<0 or speed>100000:
         raise ValueError('Некорректный срок, трафик или скорость; 0 означает безлимит')
     label=str(data.get('name','')).strip(); vk=str(data.get('vk_hash','')).strip()
@@ -379,12 +484,12 @@ def create_user(name, data):
     if name=='wdtt':
         raise ValueError('Пользователи WDTT редактируются в разделе «Пользователи»')
     if name=='wdtt-plus':
-        row=plus('create','--days',str(days),'--label',label,'--vk-hash',vk,'--ports',f'{p["port"]},{p["port"]+1},9000')['password']
+        row=plus('create','--days',str(days),'--label',label,'--vk-hash',vk,'--ports',f'{p["port"]},{cfg["wg_port"]},{cfg["client_port"]}')['password']
     elif name=='qwdtt':
         row=request(name,'/admin/passwords',{'label':label,'days':days,'vk_hash':vk,'max_devices':int(data.get('max_devices',1)),
-                                            'ports':f'{p["port"]},{p["port"]+1},9000'})
+                                            'ports':f'{p["port"]},{cfg["wg_port"]},{cfg["client_port"]}'})
     elif name.startswith('csqtt'):
-        payload={'name':label,'days':days,'hash':vk,'local_port':9000}
+        payload={'name':label,'days':days,'hash':vk,'local_port':protocol_config(name)['client_port']}
         payload['dtls_port' if name=='csqtt-2.1.9' else 'peer_port']=p['port']
         row=request(name,'/api/clients',payload)
     else:
@@ -461,13 +566,14 @@ def mutate_user(name, data, delete=False):
         if name=='qwdtt':
             payload={'password':password,'label':label,'days':days,'max_devices':int(data.get('max_devices',current.get('max_devices',1)))}
             payload['vk_hash']=vk
+            cfg=protocol_config(name);payload['ports']=f'{cfg["port"]},{cfg["wg_port"]},{cfg["client_port"]}'
             request(name,'/admin/passwords/update',payload)
         elif name=='wdtt-plus':
-            port=spec(name)['port']
-            plus('update-client','--password',password,'--label',label,'--vk-hash',vk,'--ports',f'{port},{port+1},9000')
+            port=spec(name)['port']; cfg=protocol_config(name)
+            plus('update-client','--password',password,'--label',label,'--vk-hash',vk,'--ports',f'{port},{cfg["wg_port"]},{cfg["client_port"]}')
             if 'days' in data: plus('set-expiry','--password',password,'--days',str(days))
         elif name.startswith('csqtt'):
-            payload={'name':label,'hash':vk,'days':days,'local_port':9000}
+            payload={'name':label,'hash':vk,'days':days,'local_port':protocol_config(name)['client_port']}
             payload['dtls_port' if name=='csqtt-2.1.9' else 'peer_port']=spec(name)['port']
             request(name,'/api/clients/'+urllib.parse.quote(password,safe=''),payload,'POST')
         elif name=='freeturn':
@@ -511,6 +617,7 @@ def profile_list():
                     if name in counts: counts[name]+=1
     rows=[]
     for name,p in PROFILES.items():
+        p=spec(name)
         row=dict(p,id=name,tag='vpn-'+name,subnet=f'10.{p["pool"]}.0.0/16',present=bool(s['profiles'].get(name)))
         if name!='wdtt' and (directory(name)/'settings.json').exists():
             cfg=settings(name)
@@ -523,8 +630,8 @@ def profile_list():
         row['users']=counts[name]
         row['traffic_bytes']=sum(x.get('up_bytes',0)+x.get('down_bytes',0) for x in cached)
         ports=[row['port']]
-        if name in ('wdtt','qwdtt','wdtt-plus','freeturn'): ports.append(native[2] if name=='wdtt' and native else row['port']+1)
-        if name=='qwdtt': ports.extend([row['port']+2,row['port']+3])
+        if name in ('wdtt','qwdtt','wdtt-plus','freeturn'): ports.append(native[2] if name=='wdtt' and native else protocol_config(name)['wg_port'])
+        if name=='qwdtt': ports.extend(port for port in published_ports(name) if port!=row['port'])
         if name=='wdtt' and (not native or native[3]): ports.append((native[4] or row['port']+3) if native else row['port']+3)
         row['ports']=ports
         row['protocol_labels']=[p['name']]+(['DTLS','WG','RAW'] if name in ('wdtt','qwdtt') else ['DTLS','WG'] if name in ('wdtt-plus','freeturn') else ['RTP','TUN'])
@@ -535,6 +642,7 @@ def profile_list():
         if name=='qwdtt':row['subnets'].append('10.73.0.0/16')
         if name=='wdtt' and (not native or native[3]):row['subnets'].append('10.70.0.0/16')
         row['active']=run('systemctl','is-active','wdtt.service' if name=='wdtt' else unit(name),check=False)=='active'
+        if name!='wdtt' and (directory(name)/'settings.json').exists():row['settings_sections']=settings_sections(name)
         rows.append(row)
     return rows
 
@@ -549,6 +657,7 @@ def profile_create(name,host):
         s.setdefault('disabled',{})[name]=False;save(s)
     try:
         if name!='wdtt':
+            validate_profile_ports(name,protocol_config(name,settings(name) if (directory(name)/'settings.json').exists() else {}))
             if not (BIN/name).exists():
                 raise ValueError('Серверный бинарник не установлен')
             setup(name,host)
@@ -599,8 +708,9 @@ def selected_protocols(master,bundle):
 def profile_update(name,data):
     spec(name)
     if name=='wdtt': raise ValueError('Используйте настройки инбаунда WDTT')
-    allowed={'op','protocol','remark','host','dns','enabled'}
-    if set(data)-allowed: raise ValueError('Подсети, порты и служебные параметры защищены от изменения')
+    fields={field['key']:field for section in settings_sections(name) for field in section['fields'] if not field.get('readonly')}
+    allowed={'op','protocol'}|set(fields)
+    if set(data)-allowed: raise ValueError('Неизвестный или защищённый параметр инбаунда')
     previous=settings(name); cfg=dict(previous)
     remark=data.get('remark',cfg.get('remark') or spec(name)['name'])
     host=data.get('host',cfg['host'])
@@ -624,16 +734,38 @@ def profile_update(name,data):
         was_enabled=not current.get('disabled',{}).get(name,False)
     enabled=data.get('enabled',was_enabled)
     if not isinstance(enabled,bool): raise ValueError('Включить: требуется логическое значение')
+    for key,value in data.items():
+        if key not in fields or key in ('remark','host','dns','enabled'):continue
+        field=fields[key]
+        if field['type']=='switch':
+            if not isinstance(value,bool):raise ValueError(field['label']+': требуется логическое значение')
+        elif field['type']=='number':
+            if isinstance(value,bool) or not isinstance(value,(int,float)) or not field['min']<=value<=field['max']:raise ValueError('Некорректное значение: '+field['label'])
+            if key not in ('handshake_rate','max_client_mbps') and int(value)!=value:raise ValueError(field['label']+': требуется целое число')
+            value=float(value) if key in ('handshake_rate','max_client_mbps') else int(value)
+        elif field['type']=='select' and value not in field['options']:raise ValueError('Некорректное значение: '+field['label'])
+        cfg[key]=value
     cfg.update(remark=remark,host=host,dns=dns)
+    values=protocol_config(name,cfg);old_values=protocol_config(name,previous)
+    if values['listen_host'] not in ('0.0.0.0',f'10.253.{spec(name)["index"]}.2'):raise ValueError('Адрес прослушивания: 0.0.0.0 или адрес изолированного сервера')
+    validate_profile_ports(name,values,old_values)
+    runtime_changed=any(values[key]!=old_values[key] for key in fields if key not in ('enabled','remark','host','client_port') and not (name=='freeturn' and key=='dns'))
     atomic(directory(name)/'settings.json',cfg)
     try:
+        refresh_firewall()
         if enabled!=was_enabled: profile_toggle(name,enabled)
-        elif enabled and name!='freeturn' and dns!=previous.get('dns',''): run('systemctl','restart',unit(name))
+        elif enabled and runtime_changed: run('systemctl','restart',unit(name))
+        with locked():
+            current=state()
+            for bundle in current.get('bundles',{}).values():bundle.get('signatures',{}).pop(name,None)
+            save(current)
     except Exception:
         atomic(directory(name)/'settings.json',previous)
+        refresh_firewall()
         profile_toggle(name,was_enabled)
         if was_enabled: run('systemctl','restart',unit(name))
         raise
+
     return {}
 
 
@@ -815,6 +947,7 @@ def bandwidth(name, rows):
     path=directory(name)/'bandwidth.signature'
     if path.exists() and path.read_text()==signature: return
     for iface in spec(name)['ifaces']:
+        if not nsrun(name,'ip','link','show','dev',iface,check=False):continue
         nsrun(name,'tc','qdisc','del','dev',iface,'root',check=False)
         nsrun(name,'tc','qdisc','del','dev',iface,'ingress',check=False)
         limited=[r for r in rows if r.get('max_mbps',0)>0]
@@ -870,6 +1003,11 @@ def reconcile():
     errors.extend(user_errors)
     options=[{'tag':'vpn-'+name,'label':spec(name)['name']} for name in rows_by_profile]
     atomic(ROOT/'route-options.json',options+user_options)
+    port_signature=json.dumps({name:published_ports(name) for name,present in enabled.items() if present},sort_keys=True)
+    signature_path=ROOT/'ports.signature'
+    if not signature_path.exists() or signature_path.read_text()!=port_signature:
+        refresh_firewall();atomic(signature_path,port_signature)
+
     generated,ingress=routing_snapshot(rows_by_profile)
     path=ROOT/'routing.signature'; signature=hashlib.sha256(json.dumps(ingress).encode()).hexdigest()
     if not path.exists() or path.read_text()!=signature:

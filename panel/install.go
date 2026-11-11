@@ -69,6 +69,8 @@ func ConfigureInstallation() error {
 	if err != nil {
 		return err
 	}
-	inbound.MaxUsers = maxUsersSubnetLimit
+	if initialized == 0 {
+		inbound.MaxUsers = maxUsersSubnetLimit
+	}
 	return saveWdttInbound(inbound)
 }

@@ -110,7 +110,11 @@ JSON + cookie + CSRF. Общий маршрут управления:
 | `enable` / `disable` | Запустить / остановить без удаления из таблицы |
 | `update` | Изменить настройки дополнительного инбаунда |
 
-Для `update` передаются `protocol` и нужные поля: `remark` (1–128 символов), `host` (IPv4 или домен без порта), `dns` (один или два IPv4 через запятую; пусто — настройки самого сервера), `enabled` (bool). Подсети, порты, ключи и административные адреса защищены от изменения. Изменение DNS у qWDTT, Plus и CSQTT перезапускает только соответствующий инбаунд; при ошибке настройки откатываются. Для WDTT используется существующий `/panel/api/inbound/save`.
+Для `update` передаются `protocol` и редактируемые параметры из `settings_sections` ответа каталога. Каждый раздел содержит `title` и массив `fields`: `key`, `label`, `type`, `value`, `min`/`max`, `options`, `readonly`, `help`. Поля с `readonly:true` не передаются в запросе и защищены API.
+
+Общие параметры: `remark`, `host`, `dns`, `enabled`, `listen_host`, `port`, `client_port`; для WireGuard — `wg_port`. qWDTT: `direct_enabled`, `direct_port`, `raw_enabled`, `raw_port`. Plus: `max_users`, `max_workers_per_access`, `max_handshakes`, `handshake_rate`, `max_client_mbps`, `wg_backend`. CSQTT: `secure_cookie`, дополнительно `fec` у 2.1.9. FreeTurn: `mtu`, `obf_profile`, `obf_timing_ms`, `debug`.
+
+Неподдерживаемые параметры отклоняются до записи. UDP-порты проверяются на конфликты с другими инбаундами и процессами; firewall и выдаваемые клиентские конфиги следуют настройкам. При ошибке применения восстанавливаются предыдущие настройки. Для WDTT используется `/panel/api/inbound/save`.
 
 
 Управление пользователями через этот endpoint не поддерживается. Используйте `/panel/api/users`.

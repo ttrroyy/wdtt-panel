@@ -26,18 +26,26 @@
    <template slot="users" slot-scope="_,row"><a @click="select(row)"><a-tag color="green" style="margin:0">[[ row.users || 0 ]]</a-tag></a></template>
    <template slot="total" slot-scope="_,row"><a-tag color="green" style="margin:0">[[ bytes(row.traffic_bytes || 0) ]] / ∞</a-tag></template>
   </a-table>
-  <a-modal :class="themeSwitcher.currentTheme" v-model="editing" :title="'Изменить — '+(selected && selected.name || '')" :confirm-loading="busy" @ok="saveSettings" ok-text="Сохранить" cancel-text="Закрыть">
-    <a-form layout="vertical">
-      <a-form-item label="Включить"><a-switch v-model="form.enabled"></a-switch></a-form-item>
-      <a-form-item label="Примечание"><a-input v-model.trim="form.remark" :max-length="128"></a-input></a-form-item>
-      <a-form-item label="Адрес в ссылке"><a-input v-model.trim="form.host" placeholder="IPv4 или домен без порта"></a-input></a-form-item>
-      <a-form-item label="DNS клиента"><a-input v-model.trim="form.dns" placeholder="DNS сервера по умолчанию"></a-input><div class="text-muted" style="font-size:12px;margin-top:4px">Один или два IPv4 через запятую. Обновите конфиг клиента после смены DNS. Для qWDTT, Plus и CSQTT инбаунд перезапустится.</div></a-form-item>
-      <a-form-item label="UDP-порты"><a-input :value="selected ? selected.ports.join(', ') : ''" disabled></a-input></a-form-item>
-      <a-form-item label="Подсеть"><a-input :value="selected ? selected.subnets.join(', ') : ''" disabled></a-input></a-form-item>
+  <a-modal :class="themeSwitcher.currentTheme+' protocol-settings-modal'" v-model="editing" :title="'Изменить — '+(selected && selected.name || '')" :confirm-loading="busy" :body-style="{maxHeight:'calc(100vh - 220px)',overflowY:'auto'}" width="760px" @ok="saveSettings" ok-text="Сохранить" cancel-text="Закрыть">
+    <a-form layout="horizontal" :colon="false" :label-col="{md:{span:9}}" :wrapper-col="{md:{span:14}}">
+      <template v-for="(section,index) in selected ? selected.settings_sections : []">
+        <a-divider v-if="index" :key="section.title">[[ section.title ]]</a-divider>
+        <a-form-item v-for="field in section.fields" :key="field.key">
+          <template slot="label"><a-tooltip :title="field.help || ''">[[ field.label ]] <a-icon v-if="field.help" type="question-circle"></a-icon></a-tooltip></template>
+          <a-input v-if="field.readonly" :value="field.value" disabled></a-input>
+          <a-switch v-else-if="field.type==='switch'" v-model="form[field.key]"></a-switch>
+          <a-input-number v-else-if="field.type==='number'" v-model="form[field.key]" :min="field.min" :max="field.max" :precision="['handshake_rate','max_client_mbps'].includes(field.key)?1:0" style="width:100%"></a-input-number>
+          <a-select v-else-if="field.type==='select'" v-model="form[field.key]" :dropdown-class-name="themeSwitcher.currentTheme"><a-select-option v-for="option in field.options" :key="option" :value="option">[[ option ]]</a-select-option></a-select>
+          <a-input v-else :placeholder="field.key==='dns'?'DNS сервера по умолчанию':''" v-model.trim="form[field.key]" :max-length="field.key==='remark'?128:253"></a-input>
+        </a-form-item>
+      </template>
     </a-form>
   </a-modal>
  </a-card>
 </script>
+<style>
+.protocol-settings-modal input:disabled,.protocol-settings-modal .ant-input-number-disabled {cursor:not-allowed !important;pointer-events:auto;}
+</style>
 <script>
 Vue.component('protocol-manager', {
  template:'#protocol-manager-template', delimiters:['[[',']]'],
@@ -52,7 +60,7 @@ Vue.component('protocol-manager', {
   async load(){await this.perform(async()=>{const result=await HttpUtil.get('/panel/api/protocols');if(!result.success)throw new Error(result.msg);this.profiles=result.obj;});},
   async change(row,op){await this.perform(async()=>{await this.call({op,protocol:row.id});});await this.load();},
   deleteProfile(row){this.$confirm({title:'Удалить '+row.name+'?',content:'Настройки и пользователи сохранятся для повторного создания.',okText:'Удалить',cancelText:'Отмена',okType:'danger',onOk:()=>this.change(row,'delete')});},
-  edit(row){if(row.id==='wdtt'){this.$emit('edit-wdtt');return;}this.selected=row;this.form={remark:row.name,host:row.host,dns:row.dns||'',enabled:row.enabled};this.editing=true;},
+  edit(row){if(row.id==='wdtt'){this.$emit('edit-wdtt');return;}this.selected=row;const form={};for(const section of row.settings_sections || [])for(const field of section.fields)if(!field.readonly)form[field.key]=field.key==='enabled'?row.enabled:field.value;this.form=form;this.editing=true;},
   async saveSettings(){await this.perform(async()=>{await this.call({...this.form,op:'update',protocol:this.selected.id});this.editing=false;});await this.load();},
   select(){location.href=basePath+'panel/users';},
   bytes(value){if(!value)return '0 Б';const n=Math.min(4,Math.floor(Math.log(value)/Math.log(1024)));return (value/1024**n).toFixed(n?2:0)+' '+['Б','КиБ','МиБ','ГиБ','ТиБ'][n];}
