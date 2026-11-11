@@ -14,7 +14,7 @@ import (
 
 var xrayDNSAnswerRe = regexp.MustCompile(`got answer:\s+(\S+)\s+->\s+\[([^\]]*)\]`)
 
-const defaultXrayAPIPort = 62789
+const defaultXrayAPIPort = 62889
 
 type XrayLogEntry struct {
 	DateTime    time.Time `json:"DateTime"`

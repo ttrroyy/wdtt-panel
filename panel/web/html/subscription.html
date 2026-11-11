@@ -96,7 +96,7 @@
                                     <a-col v-if="links.length" :xs="24" :sm="12" style="text-align:center;">
                                         <div class="qr-box">
                                             <a-tag color="blue" class="qr-tag">
-                                                <span>WDTT</span>
+                                                <span>[[ linkName(links[0], 0) ]]</span>
                                             </a-tag>
                                             <div class="qr-bg">
                                                 <canvas id="qrcode-wdtt" class="qr-cv" title='{{ i18n "copy" }}'
@@ -172,6 +172,13 @@
                             </div>
                         </div>
                     </div>
+
+                    {{range .protocolConfigs}}
+                    <a-form-item label="FreeTurn — конфигурация WireGuard">
+                        <p>Импортируйте этот конфиг вместе со ссылкой FreeTurn. Локальный порт транспорта — 9000.</p>
+                        <textarea readonly rows="12" style="width:100%;font-family:monospace" aria-label="Конфигурация WireGuard для FreeTurn">{{.}}</textarea>
+                    </a-form-item>
+                    {{end}}
 
                 </a-card>
             </a-col>

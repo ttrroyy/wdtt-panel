@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"wdtt-panel/network"
@@ -23,6 +24,9 @@ func panelListenAddr(cfg *PanelConfig) string {
 		port = 2860
 	}
 	listen := strings.TrimSpace(cfg.WebListen)
+	if _, err := os.Stat("/etc/wdtt/nginx-managed"); err == nil {
+		listen = "127.0.0.1"
+	}
 	if listen == "" {
 		return fmt.Sprintf(":%d", port)
 	}

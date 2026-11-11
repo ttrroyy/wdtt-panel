@@ -25,7 +25,7 @@ const (
 	defaultClientDNS    = "1.1.1.1"
 	defaultMaxUsers     = 10
 	defaultWgMTU        = 1280
-	maxUsersSubnetLimit = 249
+	maxUsersSubnetLimit = 65023
 	defaultOnlineTimeoutSec = 15
 	defaultWgKeepaliveSec    = 25
 	defaultStatsIntervalSec  = 2

@@ -68,6 +68,10 @@ func loadXrayConfigRaw() (string, error) {
 }
 
 func persistXrayConfigRaw(raw string) error {
+	runtime, err := compileProtocolRouting(raw)
+	if err != nil {
+		return err
+	}
 	if panelDBEnabled() {
 		if err := saveXrayConfigNorm(raw); err != nil {
 			return err
@@ -76,7 +80,7 @@ func persistXrayConfigRaw(raw string) error {
 	if err := os.MkdirAll(filepath.Dir(xrayConfigPath), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(xrayConfigPath, []byte(raw), 0644)
+	return os.WriteFile(xrayConfigPath, []byte(runtime), 0600)
 }
 
 func unwrapXrayTemplateConfig(raw string) string {
@@ -116,6 +120,16 @@ func getInboundTagsFromConfig(raw string) ([]string, error) {
 		m, _ := ib.(map[string]interface{})
 		if tag, ok := m["tag"].(string); ok && tag != "" {
 			tags = append(tags, tag)
+		}
+	}
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		seen[tag] = true
+	}
+	for _, option := range protocolRouteOptions() {
+		if !seen[option.Tag] {
+			tags = append(tags, option.Tag)
+			seen[option.Tag] = true
 		}
 	}
 	return tags, nil
@@ -198,13 +212,18 @@ func writeXrayConfig(raw string) error {
 		return err
 	}
 	ensureRedirectInSniffingForAccessLog(cfg)
+	mergeProtocolInbounds(cfg)
 	ensureXrayLogFiles(cfg)
 	mergedBytes, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 	merged = string(mergedBytes)
-	if err := validateXrayConfig(merged); err != nil {
+	runtime, err := compileProtocolRouting(merged)
+	if err != nil {
+		return err
+	}
+	if err := validateXrayConfig(runtime); err != nil {
 		return err
 	}
 	return persistXrayConfigRaw(merged)

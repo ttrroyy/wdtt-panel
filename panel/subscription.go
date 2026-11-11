@@ -1,14 +1,15 @@
 package panel
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/tls"
-	"context"
 	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -127,6 +128,9 @@ func subListenAddr(cfg *PanelConfig) string {
 		port = 2096
 	}
 	listen := strings.TrimSpace(cfg.SubListen)
+	if _, err := os.Stat("/etc/wdtt/nginx-managed"); err == nil {
+		listen = "127.0.0.1"
+	}
 	if listen == "" {
 		return fmt.Sprintf(":%d", port)
 	}
@@ -278,6 +282,22 @@ func (a *App) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expireSec := int64(0)
+	bundle, bundled := loadProtocolSubscription(subID)
+	if bundled {
+		info.Entry.UpBytes += bundle.UpBytes
+		info.Entry.DownBytes += bundle.DownBytes
+	}
+	bundleLinks, bundleTitles := []string{}, []string{}
+	if bundled {
+		if inbound.Enable {
+			bundleLinks = append(bundleLinks, link)
+			bundleTitles = append(bundleTitles, "WDTT")
+		}
+		for _, connection := range bundle.Connections {
+			bundleLinks = append(bundleLinks, connection.Link)
+			bundleTitles = append(bundleTitles, connection.Title)
+		}
+	}
 	if info.Entry.ExpiresAt > 0 {
 		expireSec = info.Entry.ExpiresAt
 	}
@@ -290,6 +310,9 @@ func (a *App) handleSubscription(w http.ResponseWriter, r *http.Request) {
 			pageLinks = []string{link}
 			linkTitles = []string{"WDTT JSON"}
 		}
+		if bundled {
+			pageLinks, linkTitles = bundleLinks, bundleTitles
+		}
 		a.serveSubInfoPage(w, r, subID, info, pageLinks, linkTitles)
 		return
 	}
@@ -297,6 +320,9 @@ func (a *App) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	a.applySubHeaders(w, header)
 
 	body := link
+	if bundled {
+		body = strings.Join(bundleLinks, "\n")
+	}
 	if a.cfg.SubEncrypt {
 		body = base64.StdEncoding.EncodeToString([]byte(body))
 	}
@@ -383,6 +409,18 @@ func (a *App) serveSubInfoPage(w http.ResponseWriter, r *http.Request, subID str
 		"datepicker":   "gregorian",
 		"result":       links,
 		"linkTitles":   linkTitles,
+	}
+	if _, err := os.Stat("/etc/wdtt/nginx-managed"); err == nil {
+		data["base_path"] = a.cfg.basePath()
+	}
+	if bundle, ok := loadProtocolSubscription(subID); ok {
+		var configs []string
+		for _, connection := range bundle.Connections {
+			if connection.WGConfig != "" {
+				configs = append(configs, connection.WGConfig)
+			}
+		}
+		data["protocolConfigs"] = configs
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := htmlTemplates.ExecuteTemplate(w, "subscription.html", data); err != nil {

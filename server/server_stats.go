@@ -126,6 +126,7 @@ func statsLoop(ctx context.Context, configDir string) {
 			"active":             users,
 			"sessions":           sessions,
 			"raw_sessions":       rawN,
+			"user_ips":           protocolUserIPs(),
 			"total":              total,
 			"nat":                natType,
 			"uptime":             uptimeStr,

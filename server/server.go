@@ -53,11 +53,11 @@ func rawDirectListenAddr(dtlsAddr string, rawPort int) (string, error) {
 const (
 	wgIfaceName             = "wdtt0"
 	wgServerAddr            = "10.66.66.1"
-	wgServerCIDR            = wgServerAddr + "/24"
+	wgServerCIDR            = wgServerAddr + "/16"
 	defaultInternalWGPort   = 56001
 	defaultClientDNS        = "1.1.1.1"
 	defaultMaxUsers         = 10
-	maxUsersSubnetLimit     = 249
+	maxUsersSubnetLimit     = 65023
 	defaultWgMTU            = 1280
 	defaultPanelTCPPort     = 2860 // fallback до panel.db
 	defaultSubTCPPort       = 2096
@@ -484,10 +484,19 @@ func getNextIP() string {
 	for _, dev := range db.Devices {
 		used[dev.IP] = true
 	}
-	for i := 2; i <= 250; i++ {
+	// Preserve allocation order for existing installations before using the larger pool.
+	for i := 2; i <= 254; i++ {
 		ip := fmt.Sprintf("10.66.66.%d", i)
 		if !used[ip] {
 			return ip
+		}
+	}
+	for third := 0; third <= 255; third++ {
+		for fourth := 1; fourth <= 254; fourth++ {
+			ip := fmt.Sprintf("10.66.%d.%d", third, fourth)
+			if ip != wgServerAddr && !used[ip] {
+				return ip
+			}
 		}
 	}
 	return ""

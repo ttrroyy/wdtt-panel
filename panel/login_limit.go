@@ -3,6 +3,7 @@ package panel
 import (
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -81,6 +82,9 @@ func (l *loginLimiter) reset(ip string) {
 func (a *App) sessionCookieSecure() bool {
 	if a.cfg == nil {
 		return false
+	}
+	if data, err := os.ReadFile("/etc/wdtt/public-scheme"); err == nil && strings.TrimSpace(string(data)) == "https" {
+		return true
 	}
 	return strings.TrimSpace(a.cfg.WebCertFile) != "" && strings.TrimSpace(a.cfg.WebKeyFile) != ""
 }

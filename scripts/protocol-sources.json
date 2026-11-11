@@ -1,0 +1,7 @@
+{
+  "qwdtt": {"repo": "SpaceNeuroX/proxy-turn-vk-android", "revision": "a296c57eaba69bb9479a24f9157856490890e47d", "pool": 67},
+  "wdtt-plus": {"repo": "Ivan4537/WDTT-Plus", "revision": "f706ccd373685bbde20cae33b2b7f400e8335ecc", "pool": 68},
+  "csqtt-2.1.9": {"repo": "ttrroyy/MRTT", "revision": "446293aa2e873ac5323ef6fd2316d9b81d966c11", "pool": 69},
+  "csqtt-2.5.0": {"repo": "ttrroyy/MRTT", "revision": "2066156119a5afe7d63e104aefdc8e0849999d03", "pool": 71},
+  "freeturn": {"repo": "hackdiaz-dev/free-turn-proxy", "revision": "21dca376ca26d2b6d0e2d84d107b9314b5041146", "pool": 72}
+}

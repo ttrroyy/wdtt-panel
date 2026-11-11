@@ -1,10 +1,10 @@
 #!/bin/bash
-# WDTT MTU rules: TCP MSS clamp + DF-clear for 10.66.66.0/24
+# WDTT MTU rules: TCP MSS clamp + DF-clear for 10.66.0.0/16
 # Единый источник — wdtt-install, deploy.sh, wdtt-xray-rules.sh (только вызывает up).
 set +e
 
 IFACE="${WDTT_IFACE:-wdtt0}"
-TUN_NET="${WDTT_TUN_NET:-10.66.66.0/24}"
+TUN_NET="${WDTT_TUN_NET:-10.66.0.0/16}"
 IPT_COMMENT="${WDTT_IPT_COMMENT:-WDTT_MANAGED}"
 DEFAULT_MTU="${WDTT_DEFAULT_MTU:-1280}"
 

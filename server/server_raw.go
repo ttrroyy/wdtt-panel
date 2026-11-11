@@ -1107,7 +1107,8 @@ func runRawRelay(ctx context.Context, clientConn net.Conn, deviceID, ip, passwor
 	}
 
 	group := &rawSessionGroup{ip: ip, deviceID: deviceID}
-	if existing, loaded := rawSessionsByIP.LoadOrStore(ip, group); loaded {
+	existing, loaded := rawSessionsByIP.LoadOrStore(ip, group)
+	if loaded {
 		if g, ok := existing.(*rawSessionGroup); ok && g != nil {
 			group = g
 		} else {
@@ -1117,6 +1118,9 @@ func runRawRelay(ctx context.Context, clientConn net.Conn, deviceID, ip, passwor
 	if !group.tryAdd(sess, rawMaxSessionsPerIdentity) {
 		log.Printf("[RAW] Отказ: лимит %d сессий для identity device=%s", rawMaxSessionsPerIdentity, deviceID)
 		return
+	}
+	if !loaded {
+		go applySpeedLimitForPassword(password)
 	}
 	downCh := sess.downCh
 	go rawSessionDownWriter(sess, downCh)

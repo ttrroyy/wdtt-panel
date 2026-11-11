@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"log"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -24,16 +25,12 @@ func mbpsToTcRate(mbPerSec float64) string {
 	return fmt.Sprintf("%dkbit", kbit)
 }
 
-func ipLastOctet(ip string) (int, error) {
-	parts := strings.Split(ip, ".")
-	if len(parts) != 4 {
-		return 0, fmt.Errorf("invalid ip: %s", ip)
+func ipClassID(ip string) (int, error) {
+	addr := net.ParseIP(ip).To4()
+	if addr == nil || addr[0] != 10 || (addr[1] != 66 && addr[1] != 70) || addr[3] == 0 || addr[3] == 255 || ip == wgServerAddr || ip == rawServerAddr {
+		return 0, fmt.Errorf("invalid client ip: %s", ip)
 	}
-	n, err := strconv.Atoi(parts[3])
-	if err != nil || n < 2 || n > 250 {
-		return 0, fmt.Errorf("invalid ip octet: %s", ip)
-	}
-	return n, nil
+	return int(addr[2])*254 + int(addr[3]) + 1, nil
 }
 
 func tcAvailable() bool {
@@ -70,12 +67,12 @@ func ensureTcHTB(iface string) {
 	out, _ := runCmd("tc", "qdisc", "show", "dev", iface)
 	if tcNeedsHTBReset(out) {
 		runCmdSilent("tc", "qdisc", "del", "dev", iface, "root")
-		if msg := runCmdSilent("tc", "qdisc", "add", "dev", iface, "root", "handle", "1:", "htb", "default", "999"); msg != "" {
+		if msg := runCmdSilent("tc", "qdisc", "add", "dev", iface, "root", "handle", "1:", "htb", "default", "fffe"); msg != "" {
 			log.Printf("[TC] qdisc htb add %s: %s", iface, msg)
 		}
 	}
 	runCmdSilent("tc", "class", "add", "dev", iface, "parent", "1:", "classid", "1:1", "htb", "rate", "10gbit")
-	runCmdSilent("tc", "class", "add", "dev", iface, "parent", "1:1", "classid", "1:999", "htb", "rate", "10gbit", "ceil", "10gbit")
+	runCmdSilent("tc", "class", "add", "dev", iface, "parent", "1:1", "classid", "1:fffe", "htb", "rate", "10gbit", "ceil", "10gbit")
 }
 
 func ensureTcIngress(iface string) {
@@ -89,14 +86,14 @@ func ensureTcIngress(iface string) {
 }
 
 func removeClientSpeedLimits(iface, ip string) {
-	octet, err := ipLastOctet(ip)
+	octet, err := ipClassID(ip)
 	if err != nil {
 		return
 	}
-	classID := fmt.Sprintf("1:%d", octet)
+	classID := fmt.Sprintf("1:%x", octet)
 	runCmdSilent("tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "1:0", "prio", strconv.Itoa(octet))
 	runCmdSilent("tc", "class", "del", "dev", iface, "classid", classID)
-	runCmdSilent("tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "ffff:", "prio", strconv.Itoa(octet+1000))
+	runCmdSilent("tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "ffff:", "prio", strconv.Itoa(octet))
 }
 
 func tcFilterExists(iface, parent string, prio int) bool {
@@ -118,7 +115,7 @@ func applyClientSpeedLimits(iface, ip string, downMBps, upMBps float64) {
 		removeClientSpeedLimits(iface, ip)
 		return
 	}
-	octet, err := ipLastOctet(ip)
+	octet, err := ipClassID(ip)
 	if err != nil {
 		log.Printf("[TC] %v", err)
 		return
@@ -126,7 +123,7 @@ func applyClientSpeedLimits(iface, ip string, downMBps, upMBps float64) {
 	if downMBps > 0 {
 		ensureTcHTB(iface)
 		rate := mbpsToTcRate(downMBps)
-		classID := fmt.Sprintf("1:%d", octet)
+		classID := fmt.Sprintf("1:%x", octet)
 		// replace = create or update rate without dropping the class/flows
 		if out := runCmdSilent("tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", classID,
 			"htb", "rate", rate, "ceil", rate); out != "" {
@@ -143,14 +140,14 @@ func applyClientSpeedLimits(iface, ip string, downMBps, upMBps float64) {
 	} else {
 		// clear download only
 		prio := octet
-		classID := fmt.Sprintf("1:%d", octet)
+		classID := fmt.Sprintf("1:%x", octet)
 		runCmdSilent("tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "1:0", "prio", strconv.Itoa(prio))
 		runCmdSilent("tc", "class", "del", "dev", iface, "classid", classID)
 	}
 	if upMBps > 0 {
 		ensureTcIngress(iface)
 		rate := mbpsToTcRate(upMBps)
-		prio := octet + 1000
+		prio := octet
 		// police rate cannot be changed in place — recreate filter
 		runCmdSilent("tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "ffff:", "prio", strconv.Itoa(prio))
 		if out := runCmdSilent("tc", "filter", "add", "dev", iface, "parent", "ffff:", "protocol", "ip", "prio", strconv.Itoa(prio),
@@ -160,7 +157,7 @@ func applyClientSpeedLimits(iface, ip string, downMBps, upMBps float64) {
 			log.Printf("[TC] ↑ %s: %.4f MB/s (%s)", ip, upMBps, rate)
 		}
 	} else {
-		runCmdSilent("tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "ffff:", "prio", strconv.Itoa(octet+1000))
+		runCmdSilent("tc", "filter", "del", "dev", iface, "protocol", "ip", "parent", "ffff:", "prio", strconv.Itoa(octet))
 	}
 }
 
@@ -181,6 +178,19 @@ func applySpeedLimitForEntryUnlocked(entry *PasswordEntry) {
 	}
 	for _, ip := range speedLimitIPsForEntry(entry) {
 		applyClientSpeedLimits(wgIfaceName, ip, entry.MaxDownMBps, entry.MaxUpMBps)
+	}
+	for password, candidate := range db.Passwords {
+		if candidate != entry {
+			continue
+		}
+		for _, deviceID := range allEntryDeviceIDs(entry) {
+			if value, ok := rawIPByDevice.Load(rawDeviceIdentity(deviceID, password)); ok {
+				if ip, ok := value.(string); ok {
+					applyClientSpeedLimits(rawIfaceName, ip, entry.MaxDownMBps, entry.MaxUpMBps)
+				}
+			}
+		}
+		break
 	}
 }
 
@@ -216,6 +226,7 @@ func syncAllSpeedLimits() {
 		}
 	}
 	resetTcOnIface(wgIfaceName)
+	resetTcOnIface(rawIfaceName)
 	if !hasLimits {
 		return
 	}
@@ -226,8 +237,6 @@ func syncAllSpeedLimits() {
 		if entry.MaxDownMBps <= 0 && entry.MaxUpMBps <= 0 {
 			continue
 		}
-		for _, ip := range speedLimitIPsForEntry(entry) {
-			applyClientSpeedLimits(wgIfaceName, ip, entry.MaxDownMBps, entry.MaxUpMBps)
-		}
+		applySpeedLimitForEntryUnlocked(entry)
 	}
 }

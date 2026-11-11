@@ -11,11 +11,14 @@ import (
 
 func main() {
 	noPanel := false
+	initPanel := false
 	filtered := make([]string, 0, len(os.Args))
 	for _, arg := range os.Args {
 		switch arg {
 		case "-no-panel":
 			noPanel = true
+		case "-init-panel":
+			initPanel = true
 		case "-version", "--version":
 			fmt.Println(panel.FormatPanelVersion())
 			os.Exit(0)
@@ -27,6 +30,12 @@ func main() {
 
 	if err := panel.BootstrapDB(); err != nil {
 		log.Fatalf("[PANEL] bootstrap: %v", err)
+	}
+	if initPanel {
+		if err := panel.ConfigureInstallation(); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 
 	if !noPanel {

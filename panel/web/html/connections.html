@@ -5,6 +5,7 @@
   <wdtt-sidebar></wdtt-sidebar>
   <a-layout id="content-layout">
     <a-layout-content>
+      <protocol-manager ref="protocolManager" @edit-wdtt="openWdttEdit"></protocol-manager>
       <a-spin :spinning="loadingStates.spinning" :delay="500" tip='{{ i18n "loading"}}' size="large">
         <transition name="list" appear>
           <a-row v-if="!loadingStates.fetched">
@@ -12,98 +13,7 @@
           </a-row>
           <a-row :gutter="[isMobile ? 8 : 16, isMobile ? 0 : 12]" v-else>
             <a-col>
-              <a-card title="WDTT" hoverable style="margin-bottom:16px">
-                <template #extra>
-                  <a-button v-if="!wdttConfigured" type="primary" icon="plus" size="small" @click="openWdttCreate">
-                    Создать WDTT
-                  </a-button>
-                </template>
-                <div v-if="!wdttConfigured" class="text-muted">WDTT не настроен</div>
-                <div v-else-if="isMobile" class="conn-mobile-list">
-                  <div v-for="row in wdttRows" :key="row.key" class="conn-mobile-card">
-                    <div class="conn-mobile-head">
-                      <div>
-                        <div class="conn-mobile-title">[[ row.remark || 'WDTT' ]]</div>
-                        <div class="conn-mobile-tags">
-                          <a-tag color="purple">WDTT</a-tag>
-                          <a-tag color="blue">DTLS [[ row.dtls_port ]]</a-tag>
-                          <a-tag color="green">WG [[ row.wg_port ]]</a-tag>
-                          <a-tag v-if="row.raw_enable !== false" color="orange">RAW [[ row.raw_direct_port || ((Number(row.dtls_port)||56000)+3) ]]</a-tag>
-                          <a-tag v-else>RAW off</a-tag>
-                        </div>
-                      </div>
-                      <a-switch :checked="row.enable !== false" :loading="row.toggling"
-                        @change="checked => toggleWdttEnable(row, checked)"></a-switch>
-                    </div>
-                    <div class="conn-mobile-meta">
-                      <span>Онлайн: <a @click="goUsers">[[ row.online_users || 0 ]]</a></span>
-                      <span>[[ row.traffic_used_fmt || '0 B' ]] / ∞</span>
-                    </div>
-                    <div class="conn-mobile-actions">
-                      <a-button size="small" icon="edit" @click="openWdttEdit(row)">Изменить</a-button>
-                    </div>
-                  </div>
-                </div>
-                <a-table v-else :columns="wdttCols" :data-source="wdttRows" :pagination="false"
-                  :row-key="row => row.key" bordered size="middle"
-                  :locale='{ emptyText: "WDTT не настроен" }'>
-                  <template slot="wdttOperate" slot-scope="_, row">
-                    <a-dropdown :trigger="['click']">
-                      <a-icon @click="e => e.preventDefault()" type="more"
-                        :style="{ fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }"></a-icon>
-                      <a-menu slot="overlay" :theme="themeSwitcher.currentTheme">
-                        <a-menu-item @click="openWdttEdit(row)">
-                          <a-icon type="edit"></a-icon>
-                          <span>Изменить WDTT</span>
-                        </a-menu-item>
-                      </a-menu>
-                    </a-dropdown>
-                  </template>
-                  <template slot="wdttEnable" slot-scope="_, row">
-                    <a-switch :checked="row.enable !== false" :loading="row.toggling"
-                      @change="checked => toggleWdttEnable(row, checked)"></a-switch>
-                  </template>
-                  <template slot="wdttRemark" slot-scope="text">[[ text || '—' ]]</template>
-                  <template slot="wdttPort" slot-scope="_, row">
-                    <span class="connections-port-cell">
-                      <a-tooltip title="UDP порт DTLS — GETCONF / WG handshake">
-                        <a-tag color="blue" :style="{ margin: 0 }">[[ row.dtls_port ]]</a-tag>
-                      </a-tooltip>
-                      <a-tooltip title="UDP порт WireGuard (userspace)">
-                        <a-tag color="green" :style="{ margin: 0 }">[[ row.wg_port ]]</a-tag>
-                      </a-tooltip>
-                      <a-tooltip v-if="row.raw_enable !== false" title="UDP порт direct RAW (WRAP, без DTLS)">
-                        <a-tag color="orange" :style="{ margin: 0 }">[[ row.raw_direct_port || ((Number(row.dtls_port)||56000)+3) ]]</a-tag>
-                      </a-tooltip>
-                    </span>
-                  </template>
-                  <template slot="wdttProtocol" slot-scope="_, row">
-                    <span class="connections-proto-cell">
-                      <a-tag color="purple" :style="{ margin: 0 }">WDTT</a-tag>
-                      <a-tag color="blue" :style="{ margin: 0 }">DTLS</a-tag>
-                      <a-tag color="green" :style="{ margin: 0 }">WG</a-tag>
-                      <a-tooltip v-if="row.raw_enable !== false" :title="'IP без WireGuard · UDP ' + (row.raw_direct_port || ((Number(row.dtls_port)||56000)+3)) + ' · ' + (row.raw_subnet || '10.70.0.0/16') + (row.raw_sessions ? (' · сессий ' + row.raw_sessions) : '')">
-                        <a-tag color="orange" :style="{ margin: 0 }">RAW[[ row.raw_sessions ? (' · ' + row.raw_sessions) : '' ]]</a-tag>
-                      </a-tooltip>
-                      <a-tooltip v-else title="RAW выключен в настройках WDTT">
-                        <a-tag :style="{ margin: 0 }">RAW off</a-tag>
-                      </a-tooltip>
-                    </span>
-                  </template>
-                  <template slot="wdttUsers" slot-scope="_, row">
-                    <a @click="goUsers" style="cursor:pointer">
-                      <a-tooltip title="Онлайн (VK)">
-                        <a-tag color="green" style="margin:0">[[ row.online_users || 0 ]]</a-tag>
-                      </a-tooltip>
-                    </a>
-                  </template>
-                  <template slot="wdttTraffic" slot-scope="_, row">
-                    <a-tag color="green" style="margin:0">[[ row.traffic_used_fmt || '0 B' ]] / ∞</a-tag>
-                  </template>
-                </a-table>
-              </a-card>
-
-              <a-card title='{{ i18n "pages.inbounds.title" }}' hoverable>
+              <a-card title="Прокси Xray" hoverable>
                 <template #extra>
                   <a-button-group>
                     <a-button icon="sync" @click="manualRefresh" :loading="refreshing"></a-button>
@@ -315,6 +225,7 @@
 <script src="{{ .base_path }}assets/js/model/dbinbound.js?{{ .cur_ver }}"></script>
 {{ template "component/aThemeSwitch" . }}
 {{ template "component/wdttSidebar" . }}
+{{ template "component/protocolManager" . }}
 <script>
   class InboundSetting {
     constructor(data = {}) {
@@ -458,16 +369,6 @@
       refreshing: false,
       isRefreshEnabled: localStorage.getItem("inboundRefreshEnabled") === "true",
       refreshInterval: Number(localStorage.getItem("inboundRefreshInterval")) || 5000,
-      wdttCols: [
-        { title: 'ID', dataIndex: 'id', width: 52, align: 'center' },
-        { title: '{{ i18n "pages.inbounds.operate" }}', scopedSlots: { customRender: 'wdttOperate' }, width: 72, align: 'center' },
-        { title: '{{ i18n "pages.inbounds.enable" }}', scopedSlots: { customRender: 'wdttEnable' }, width: 104, align: 'center' },
-        { title: '{{ i18n "pages.inbounds.remark" }}', dataIndex: 'remark', scopedSlots: { customRender: 'wdttRemark' }, ellipsis: true },
-        { title: '{{ i18n "pages.inbounds.port" }}', scopedSlots: { customRender: 'wdttPort' }, width: 200, align: 'center' },
-        { title: '{{ i18n "pages.inbounds.protocol" }}', scopedSlots: { customRender: 'wdttProtocol' }, width: 240, align: 'center' },
-        { title: '{{ i18n "menu.users" }}', scopedSlots: { customRender: 'wdttUsers' }, width: 128, align: 'center' },
-        { title: '{{ i18n "pages.inbounds.traffic" }}', scopedSlots: { customRender: 'wdttTraffic' }, width: 168, align: 'center' },
-      ],
       xrayCols: [
         { title: 'ID', dataIndex: 'id', width: 52, align: 'center' },
         { title: '{{ i18n "pages.inbounds.operate" }}', scopedSlots: { customRender: 'xrayOperate' }, width: 72, align: 'center' },
@@ -479,10 +380,6 @@
       ],
     },
     computed: {
-      wdttRows() {
-        if (!this.wdttConfigured) return [];
-        return [Object.assign({ id: 1, key: this.wdtt.tag || 'wdtt-in' }, this.wdtt)];
-      },
       filteredXrayRows() {
         const q = (this.searchText || '').trim().toLowerCase();
         if (!q) return this.xrayInbounds;
@@ -500,19 +397,7 @@
         firewallPortsModal.show(this);
       },
       goUsers() { location.href = basePath + 'panel/users'; },
-      openWdttCreate() {
-        if (this.wdttConfigured) {
-          this.toast('На панели допускается только одно WDTT-подключение', false);
-          return;
-        }
-        inboundModal.showCreate(new InboundSetting({
-          tag: 'wdtt-in', remark: 'WDTT', enable: true, listen_host: '0.0.0.0',
-          dtls_port: 56000, wg_port: 56001, client_port: 9000, dns: '1.1.1.1', max_users: 10,
-          server_ip: this.wdtt.server_ip, default_link_host: this.wdtt.default_link_host,
-          panel_tls: this.wdtt.panel_tls,
-        }));
-      },
-      openWdttEdit(row) { inboundModal.show(row || this.wdtt); },
+      async openWdttEdit() { await this.loadWdtt(); inboundModal.show(this.wdtt); },
       openXrayCreate() {
         const { inbound, dbInbound } = newXrayMixedModels();
         xrayInModal.show({
@@ -561,34 +446,16 @@
         const withSpinner = options.withSpinner === true;
         this.refreshing = true;
         if (withSpinner) this.loadingStates.spinning = true;
-        await Promise.all([this.loadWdtt(), this.loadXrayInbounds()]);
-        if (!this.loadingStates.fetched) this.loadingStates.fetched = true;
-        setTimeout(() => {
+        try {
+          await Promise.all([this.loadWdtt(), this.loadXrayInbounds()]);
+        } finally {
+          this.loadingStates.fetched = true;
           this.refreshing = false;
           if (withSpinner) this.loadingStates.spinning = false;
-        }, 400);
+        }
       },
       async manualRefresh() {
         if (!this.refreshing) await this.loadAll({ withSpinner: true });
-      },
-      async toggleWdttEnable(row, enabled) {
-        row.toggling = true;
-        const payload = Object.assign({}, new InboundSetting(row).payload(false), { enable: !!enabled });
-        const res = await panelApiJson('panel/api/inbound/save', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        }).catch(err => {
-          this.toast(err.message || 'ошибка', false);
-          return null;
-        });
-        row.toggling = false;
-        if (res && res.obj) {
-          this.toast(enabled ? 'VPN включён' : 'VPN выключен', true);
-          this.wdtt = new InboundSetting(res.obj);
-          this.wdttConfigured = !!res.obj.configured;
-        } else {
-          await this.loadWdtt();
-        }
       },
       async saveXrayInbound(inbound, dbInbound, isCreate) {
         xrayInModal.loading(true);
@@ -702,6 +569,7 @@
         this.toast('WDTT сохранён', true);
         this.wdtt = new InboundSetting(obj);
         this.wdttConfigured = true;
+        this.$refs.protocolManager.load();
       };
       try {
         const settingsMsg = await HttpUtil.get('/panel/setting/defaultSettings').catch(() => null);

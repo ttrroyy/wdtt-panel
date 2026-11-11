@@ -96,7 +96,12 @@
     </a-form-item>
     <a-form-item label='Inbound Tags'>
       <a-select v-model="ruleModal.rule.inboundTag" mode="multiple" :dropdown-class-name="themeSwitcher.currentTheme">
-        <a-select-option v-for="tag in ruleModal.inboundTags" :value="tag">[[ tag ]]</a-select-option>
+        <a-select-option v-for="tag in ruleModal.inboundTags.filter(t => !t.includes('-user-'))" :value="tag">[[ ruleModal.tagLabel(tag) ]]</a-select-option>
+      </a-select>
+    </a-form-item>
+    <a-form-item label="Пользователь VPN">
+      <a-select :value="(ruleModal.rule.inboundTag||[]).filter(t => t.includes('-user-'))" mode="multiple" @change="tags => ruleModal.setVPNUsers(tags)" :dropdown-class-name="themeSwitcher.currentTheme">
+        <a-select-option v-for="option in ruleModal.vpnOptions.filter(o => o.tag.includes('-user-'))" :key="option.tag" :value="option.tag">[[ option.label ]]</a-select-option>
       </a-select>
     </a-form-item>
     <a-form-item label='Outbound Tag'>
@@ -145,6 +150,9 @@
     inboundTags: [],
     outboundTags: [],
     users: [],
+    vpnOptions: [],
+    tagLabel(tag) { return this.vpnOptions.find(o => o.tag === tag)?.label || tag; },
+    setVPNUsers(tags) { this.rule.inboundTag = (this.rule.inboundTag||[]).filter(t => !t.startsWith('vpn-')).concat(tags); },
     balancerTags: [],
     ok() {
       newRule = ruleModal.getResult();
@@ -161,6 +169,7 @@
       this.okText = okText;
       this.confirm = confirm;
       this.visible = true;
+      HttpUtil.get('/panel/api/protocol-route-options').then(msg => { if(msg.success) this.vpnOptions = msg.obj || []; });
       if (isEdit) {
         this.rule.domain = rule.domain ? rule.domain.join(',') : [];
         this.rule.ip = rule.ip ? rule.ip.join(',') : [];

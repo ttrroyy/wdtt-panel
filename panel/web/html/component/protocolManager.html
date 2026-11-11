@@ -1,0 +1,85 @@
+{{define "component/protocolManager"}}
+<script type="text/x-template" id="protocol-manager-template">
+ <a-card title="VPN-подключения" hoverable style="margin-bottom:16px">
+  <template slot="extra"><a-button icon="sync" :loading="busy" @click="load" aria-label="Обновить подключения"></a-button></template>
+  <a-alert v-if="error" type="error" show-icon :message="error" style="margin-bottom:12px"></a-alert>
+  <a-dropdown :trigger="['click']" :disabled="!profiles.some(p=>!p.present)" style="margin-bottom:12px">
+   <a-button type="primary" icon="plus" :disabled="busy || !profiles.some(p=>!p.present)">Создать подключение</a-button>
+   <a-menu slot="overlay" @click="({key})=>change(profiles.find(p=>p.id===key),'create')">
+    <a-menu-item v-for="row in profiles.filter(p=>!p.present)" :key="row.id">[[ row.name ]]</a-menu-item>
+   </a-menu>
+  </a-dropdown>
+  <a-table :columns="columns" :data-source="profiles.filter(p=>p.present)" row-key="id" :pagination="false" :scroll="{x:1084}" bordered size="middle">
+   <template slot="operate" slot-scope="_,row">
+    <a-dropdown :trigger="['click']">
+     <a-icon type="more" style="font-size:16px;cursor:pointer" tabindex="0" role="button" @keydown.enter.prevent="$event.currentTarget.click()" @keydown.space.prevent="$event.currentTarget.click()" :aria-label="'Действия: '+row.name"></a-icon>
+     <a-menu slot="overlay" :theme="themeSwitcher.currentTheme">
+      <a-menu-item v-if="row.id==='wdtt'" @click="$emit('edit-wdtt')"><a-icon type="edit"></a-icon>Изменить</a-menu-item>
+      <a-menu-item @click="select(row)"><a-icon type="team"></a-icon>Пользователи</a-menu-item>
+      <a-menu-item @click="deleteProfile(row)"><span style="color:#ff4d4f"><a-icon type="delete"></a-icon>Удалить</span></a-menu-item>
+     </a-menu>
+    </a-dropdown>
+   </template>
+   <template slot="enable" slot-scope="_,row"><a-tooltip :title="row.enabled && !row.active ? 'Служба не запущена — проверьте журнал' : ''"><a-switch :checked="row.enabled" :loading="busy" @change="enabled=>change(row,enabled?'enable':'disable')"></a-switch></a-tooltip></template>
+   <template slot="ports" slot-scope="_,row"><a-tag v-for="(port,index) in row.ports" :key="port" :color="['blue','green','orange','cyan'][index]" style="margin:2px">[[ port ]]</a-tag></template>
+   <template slot="protocol" slot-scope="_,row"><a-tag v-for="(label,index) in row.protocol_labels" :key="label" :color="['purple','blue','green','orange'][index]" style="margin:2px">[[ label ]]</a-tag></template>
+   <template slot="subnet" slot-scope="_,row"><div v-for="subnet in row.subnets || [row.subnet]" :key="subnet">[[ subnet ]]</div></template>
+   <template slot="users" slot-scope="_,row"><a @click="select(row)"><a-tag color="green" style="margin:0">[[ row.users || 0 ]]</a-tag></a></template>
+   <template slot="total" slot-scope="_,row"><a-tag color="green" style="margin:0">[[ bytes(row.traffic_bytes || 0) ]] / ∞</a-tag></template>
+  </a-table>
+  <template v-if="selected">
+   <a-divider orientation="left">[[ selected.name ]] — пользователи</a-divider>
+   <a-button type="primary" icon="plus" @click="edit(null)" style="margin-bottom:12px">Добавить пользователя</a-button>
+   <a-table :columns="userColumns" :data-source="users" row-key="id" :scroll="{x:850}" :pagination="{pageSize:10}" bordered size="middle">
+    <template slot="traffic" slot-scope="_,row">[[ bytes((row.down_bytes||0)+(row.up_bytes||0)) ]] / [[ row.total_bytes ? bytes(row.total_bytes) : '∞' ]]</template>
+    <template slot="expires" slot-scope="_,row">[[ row.expires_at ? new Date(row.expires_at*1000).toLocaleString() : 'Бессрочно' ]]</template>
+    <template slot="enabled" slot-scope="_,row"><a-switch :checked="row.enabled" :disabled="busy" @change="value => toggle(row,value)"></a-switch></template>
+    <template slot="userActions" slot-scope="_,row">
+     <a-button size="small" @click="share(row)">Подключение</a-button>
+     <a-button size="small" @click="edit(row)">Изменить</a-button>
+     <a-popconfirm title="Удалить пользователя и его доступ?" @confirm="remove(row)"><a-button size="small" type="danger">Удалить</a-button></a-popconfirm>
+    </template>
+   </a-table>
+  </template>
+  <a-modal v-model="editing" :title="form.password ? 'Изменить пользователя' : 'Добавить пользователя'" @ok="saveUser" :confirm-loading="busy" cancel-text="Закрыть" ok-text="Сохранить">
+   <a-form layout="vertical">
+    <a-form-item label="Имя"><a-input v-model.trim="form.name" :max-length="128"></a-input></a-form-item>
+    <a-form-item v-if="selected && selected.id!=='freeturn'" label="VK hash / ссылка на звонок"><a-textarea v-model.trim="form.vk_hash" :rows="2"></a-textarea></a-form-item>
+    <a-form-item label="Срок с момента сохранения, дней — 0 бессрочно"><a-input-number v-model="form.days" :min="0" :max="365"></a-input-number></a-form-item>
+    <a-form-item label="Трафик, ГиБ — 0 безлимит"><a-input-number v-model="form.total_gb" :min="0" :precision="2"></a-input-number></a-form-item>
+    <a-form-item label="Скорость в каждом направлении, Мбит/с — 0 безлимит"><a-input-number v-model="form.max_mbps" :min="0" :max="100000" :precision="2"></a-input-number></a-form-item>
+    <a-form-item v-if="selected && selected.id==='qwdtt'" label="Устройств"><a-input-number v-model="form.max_devices" :min="1" :max="65023"></a-input-number></a-form-item>
+   </a-form>
+  </a-modal>
+  <a-modal v-model="sharing" title="Данные подключения" :footer="null" width="700px">
+   <p>Ссылка для клиента:</p><a-textarea :value="exported.link" read-only :rows="4" aria-label="Ссылка подключения"></a-textarea>
+   <template v-if="exported.wg_config"><p style="margin-top:16px">FreeTurn передаёт трафик WireGuard. Импортируйте также этот конфиг в WireGuard; локальный порт FreeTurn — 9000.</p><a-textarea :value="exported.wg_config" read-only :rows="12" aria-label="Конфигурация WireGuard"></a-textarea></template>
+  </a-modal>
+ </a-card>
+</script>
+<script>
+Vue.component('protocol-manager', {
+ template:'#protocol-manager-template', delimiters:['[[',']]'],
+ data(){return {
+  themeSwitcher,profiles:[],users:[],selected:null,busy:false,error:'',editing:false,sharing:false,exported:{},form:{},
+  columns:[{title:'ID',dataIndex:'display_id',width:48,align:'center'},{title:'Меню',scopedSlots:{customRender:'operate'},width:60,align:'center'},{title:'Включить',scopedSlots:{customRender:'enable'},width:86,align:'center'},{title:'Примечание',dataIndex:'name',width:150},{title:'Порт',scopedSlots:{customRender:'ports'},width:160,align:'center'},{title:'Протокол',scopedSlots:{customRender:'protocol'},width:200,align:'center'},{title:'Подсеть',scopedSlots:{customRender:'subnet'},width:145,align:'center'},{title:'Пользователи',scopedSlots:{customRender:'users'},width:105,align:'center'},{title:'Трафик',scopedSlots:{customRender:'total'},width:130,align:'center'}],
+  userColumns:[{title:'Имя',dataIndex:'name'},{title:'Доступ',scopedSlots:{customRender:'enabled'}},{title:'Трафик',scopedSlots:{customRender:'traffic'}},{title:'Окончание',scopedSlots:{customRender:'expires'}},{title:'Действия',scopedSlots:{customRender:'userActions'}}]
+ }},
+ methods:{
+  async call(data){const result=await panelApiJson('panel/api/protocols',{method:'POST',body:JSON.stringify(data)});return result.obj;},
+  async perform(fn){this.busy=true;this.error='';try{await fn();}catch(e){this.error=e.response?.data?.msg||e.message||'Ошибка запроса';this.$message.error(this.error);}finally{this.busy=false;}},
+  async load(){await this.perform(async()=>{const result=await HttpUtil.get('/panel/api/protocols');if(!result.success)throw new Error(result.msg);this.profiles=result.obj;});},
+  async change(row,op){await this.perform(async()=>{await this.call({op,protocol:row.id});if(this.selected?.id===row.id)this.selected=null;});await this.load();},
+  deleteProfile(row){this.$confirm({title:'Удалить '+row.name+'?',content:'Настройки и пользователи сохранятся для повторного создания.',okText:'Удалить',cancelText:'Отмена',okType:'danger',onOk:()=>this.change(row,'delete')});},
+  async select(row){if(row.id==='wdtt'){location.href=basePath+'panel/users';return;}this.selected=row;await this.refreshUsers();},
+  async refreshUsers(){await this.perform(async()=>{this.users=await this.call({op:'users',protocol:this.selected.id});});},
+  edit(row){this.form={password:row?.password||'',name:row?.name||'',vk_hash:row?.vk_hashes||row?.vk_hash||'',days:row?.expires_at?Math.max(1,Math.ceil((row.expires_at-Date.now()/1000)/86400)):0,total_gb:(row?.total_bytes||0)/1073741824,max_mbps:row?.max_mbps||0,max_devices:row?.max_devices||1};this.editing=true;},
+  async saveUser(){await this.perform(async()=>{await this.call({...this.form,op:this.form.password?'user-update':'user-add',protocol:this.selected.id,total_bytes:Math.round((this.form.total_gb||0)*1073741824)});this.editing=false;});if(!this.editing)await this.refreshUsers();},
+  async toggle(row,enabled){await this.perform(()=>this.call({op:'user-update',protocol:this.selected.id,password:row.password,enabled}));await this.refreshUsers();},
+  async remove(row){await this.perform(()=>this.call({op:'user-delete',protocol:this.selected.id,password:row.password}));await this.refreshUsers();},
+  share(row){this.exported=row;this.sharing=true;},
+  bytes(value){if(!value)return '0 Б';const n=Math.min(4,Math.floor(Math.log(value)/Math.log(1024)));return (value/1024**n).toFixed(n?2:0)+' '+['Б','КиБ','МиБ','ГиБ','ТиБ'][n];}
+ },mounted(){this.load();}
+});
+</script>
+{{end}}

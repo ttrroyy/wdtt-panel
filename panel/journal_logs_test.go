@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -45,6 +47,12 @@ func TestFormatWdttStatsJournalLine(t *testing.T) {
 }
 
 func TestPrependWdttStatsSummary(t *testing.T) {
+	previous := wdttConfigDir
+	wdttConfigDir = t.TempDir()
+	defer func() { wdttConfigDir = previous }()
+	if err := os.WriteFile(filepath.Join(wdttConfigDir, "server.log"), []byte(`{"active_users":1,"sessions":2}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	lines := prependWdttStatsSummary([]string{"2026/06/16 10:00:00 INFO - WDTT: [WG] ok"})
 	if len(lines) != 2 || !strings.Contains(lines[0], "[СТАТ]") {
 		t.Fatalf("expected stats prepended, got %v", lines)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 type App struct {
@@ -46,6 +47,14 @@ func Run() error {
 		log.Printf("xray stats API patch: %v", err)
 	}
 	startStatusCollector()
+	go func() {
+		for {
+			if err := syncProtocolXray(); err != nil {
+				log.Printf("protocol routing: %v", err)
+			}
+			time.Sleep(3 * time.Second)
+		}
+	}()
 
 	app := &App{cfg: cfg}
 	app.startSubscriptionServer()
@@ -86,6 +95,8 @@ func Run() error {
 
 	// API (auth required)
 	api := base + "panel/api/"
+	mux.HandleFunc(api+"protocols", app.requireAuthCSRF(app.handleProtocols))
+	mux.HandleFunc(api+"protocol-route-options", app.requireAuthCSRF(app.handleProtocolRouteOptions))
 	mux.HandleFunc(api+"status", app.requireAuthCSRF(app.handleStatus))
 	mux.HandleFunc(api+"inbound", app.requireAuthCSRF(app.handleInboundGet))
 	mux.HandleFunc(api+"inbound/save", app.requireAuthCSRF(app.handleInboundSave))

@@ -39,3 +39,6 @@ wdtt-backups/
 __pycache__/
 *.pyc
 dist
+
+graphify-out/
+__pycache__/

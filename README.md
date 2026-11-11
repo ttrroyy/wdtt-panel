@@ -1,98 +1,119 @@
-# WDTT
+# WDTT Panel
 
-[![Поддержать WDTT](https://devgamemaga.mooo.com:9443/b/soft.svg)](https://devgamemaga.mooo.com:9443/donate)
+Панель управления **WDTT, qWDTT, WDTT Plus, CSQTT 2.1.9, CSQTT 2.5.0 и FreeTurn** на одном VPS, с отдельными инбаундами, пользователями и маршрутизацией через **Xray**.
 
-VPN на VPS через медиарелеи ВК (TURN) с веб-панелью и опциональным **Xray**-маршрутизатором.
-
-```
-wdtt/
-├── server/                             # wdtt-server (DTLS + userspace WG + NAT)
-├── panel/                              # wdtt-panel (UI в стиле 3x-ui)
-├── pkg/                                # sharelink, vkhash, paneldb (общее)
-├── deploy.sh
-└── docs/                               # SERVER.md (разбор) + API.md (REST панели)
-```
-
-## Происхождение
-
-Серверная часть основана на проекте **[proxy-turn-vk-android](https://github.com/amurcanov/proxy-turn-vk-android)** (автор [amurcanov](https://github.com/amurcanov)) — WireGuard-туннель через DTLS-медиарелеи ВК.
-
-WDTT расширяет upstream: мультипользователи, веб-панель, Xray, ссылки `wdtt://`, Telegram-бот, установщик. Подробности: **[CREDITS.md](CREDITS.md)**
+Независимое развитие [ildarmaga/wdtt](https://github.com/ildarmaga/wdtt). Происхождение исходного VPN-сервера и авторство — **[CREDITS.md](CREDITS.md)**.
 
 ## Быстрая установка
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/ildarmaga/wdtt-install/main/install.sh)
+curl -fsSL https://raw.githubusercontent.com/ttrroyy/wdtt-panel/main/install.sh -o /tmp/wdtt-panel-install.sh
+bash /tmp/wdtt-panel-install.sh
 ```
 
-Панель: `http://IP:2860/wdtt/` — логин `admin` / `wdtt` (смените в настройках).
+Установщик запускается от **root** на **Debian / Ubuntu**, архитектура **amd64 / arm64**. Все шесть серверов устанавливаются автоматически. Первая установка собирает закреплённые версии из исходников, поэтому требует времени и свободного места.
 
-## Совместимые клиенты
+В установщике два выбора:
 
-| Клиент | Платформа | Формат ссылок |
-|--------|-----------|---------------|
-| **VK Turn Proxy** | iOS | `wdtt://` (colon), 1-й хеш или `VK_HASH` |
-| **WDTT** | Android | `wdtt://` (colon), до 4 хешей через `,` или `VK_HASH` |
-| **PWDTT** | Desktop Win/Linux | `wdtt://` (colon), до 4 хешей — `pwdtt-client-*` из [релизов WDTT](https://github.com/ildarmaga/wdtt/releases/latest); исходники: [ildarmaga/pwdtt-client](https://github.com/ildarmaga/pwdtt-client) (модифицированная версия [luminescq/PWDTT](https://github.com/luminescq/PWDTT), GPL-3.0) |
-| **WDTT** | Windows | `wdtt://` (colon), до 4 хешей через `,` или `VK_HASH` |
-| **qWDTT** | Android (fork) | `qwdtt://`, `hashes=h1,h2,…` (bare, до 4) или `VK_HASH` |
-| **WDTT** (qwdtt) | Windows | `qwdtt://`, `hashes=h1,h2,…` (bare, до 4) или `VK_HASH` |
+1. **Доступ к панели:** HTTP; самоподписанный HTTPS на IP; домен с существующим сертификатом; домен с выпуском сертификата через Certbot. Для домена указывается его имя, для готового сертификата — пути к сертификату и ключу.
+2. **Внешний порт:** оставить **443** или указать свой.
 
-## VK hash из панели
+Панель доступна по `https://<домен или IP>/wdtt/` либо `http://<IP>:<порт>/wdtt/` при выборе HTTP. Backend панели и подписок слушает только **127.0.0.1**, внешний доступ обслуживает **Nginx**.
 
-В **Настройки → VK Creator** можно создать VK hash (join link) и сразу записать его пользователю — без отдельного сервера creator на VPS.
+Логин — `admin`, случайный пароль первой установки — в `/etc/wdtt/install-credentials` (только root). Повторная установка сохраняет пароль и пользователей.
 
-**Нужны VK cookies** (минимум `remixsid`). Получить удобнее всего через десктопное приложение **[WhitelistBypass.Creator](https://github.com/kulikov0/whitelist-bypass/releases)** из репозитория [kulikov0/whitelist-bypass](https://github.com/kulikov0/whitelist-bypass/releases): войти в VK, экспортировать cookies и вставить в панель (или только значение `remixsid` из DevTools).
+## Совместная установка с lucx-ui-pro
 
-В панели также доступны: вход по паролю VK, загрузка `cookies-vk.json`, таблица активных звонков (живой / завершается / мёртвый), кнопка «Завершить» (`forceFinish`, строка удаляется после смерти звонка). Данные хранятся в `/etc/wdtt/panel.db` (`vk_cookies`, `vk_calls`).
+При занятом 443 установщик проверяет владельца порта:
+
+- **Nginx HTTP/TLS:** добавляется vhost для отдельного домена либо путь `/wdtt/` в подходящий существующий TLS vhost.
+- **SNI-схема lucx-ui-pro:** отдельный TLS-домен направляется на локальный TLS vhost; учитывается PROXY protocol. Существующие SNI-маршруты сохраняются.
+- **Другой процесс / неподдерживаемая схема:** предлагается свободный внешний порт до установки.
+
+Для совместного 443 нужен TLS-домен. HTTP и самоподписанный сертификат на IP при занятом 443 требуют другого порта. Для Certbot A-запись домена должна указывать на VPS, порт 80 должен быть доступен для HTTP-01.
+
+## Протоколы и подсети
+
+| Инбаунд | Основной UDP-порт | Подсеть | Сервер |
+|---------|------------------|---------|--------|
+| **WDTT** | `56000` | `10.66.0.0/16`; RAW `10.70.0.0/16` | Встроен в панель |
+| **qWDTT** | `56100` | `10.67.0.0/16`; RAW `10.73.0.0/16` | [SpaceNeuroX/proxy-turn-vk-android](https://github.com/SpaceNeuroX/proxy-turn-vk-android) |
+| **WDTT Plus** | `56200` | `10.68.0.0/16` | [Ivan4537/WDTT-Plus](https://github.com/Ivan4537/WDTT-Plus) |
+| **CSQTT 2.1.9** | `56300` | `10.69.0.0/16` | [v2.1.9-legacy](https://github.com/ttrroyy/MRTT/releases/tag/v2.1.9-legacy) |
+| **CSQTT 2.5.0** | `56400` | `10.71.0.0/16` | [v2.5.0-legacy](https://github.com/ttrroyy/MRTT/releases/tag/v2.5.0-legacy) |
+| **FreeTurn + WireGuard** | `56500` | `10.72.0.0/16` | [hackdiaz-dev/free-turn-proxy](https://github.com/hackdiaz-dev/free-turn-proxy) |
+
+Дополнительные серверы работают в отдельных Linux network namespaces, с раздельными каталогами и службами. Транзитная сеть — `10.253.0.0/16`. WireGuard-порт обычно равен основному +1; RAW direct у WDTT/qWDTT — основному +3; qWDTT direct WRAP — основному +2. Внутренние порты namespace не публикуются как отдельные административные API.
+
+Старые адреса WDTT `10.66.66.x` сохраняются; расширены пул адресов, сетевые маски, таблицы доставки CSQTT и идентификаторы ограничений скорости. Доступно до **65 023 адресов устройств** в пуле WDTT. Размер пула не гарантирует такое число одновременных подключений: оно зависит от VPS и нагрузки.
+
+## Подключения и пользователи
+
+Раздел **Подключения** содержит общую таблицу: ID, меню, включение, примечание, порты, протокол, **подсеть**, пользователи и трафик.
+
+- На VPS разрешён **один инбаунд каждого из шести типов**.
+- Переключатель останавливает / запускает инбаунд с сохранением пользователей.
+- «Удалить» убирает инбаунд; его настройки и пользователи сохраняются для повторного создания через «Создать подключение».
+- Меню WDTT открывает его расширенные настройки. Пользователи WDTT редактируются в существующем разделе **Пользователи**, остальные — по нажатию на счётчик своего инбаунда.
+
+У пользователя **0 дней** означает бессрочный доступ, **0 трафика** — отсутствие квоты, **0 Мбит/с** — отсутствие ограничения скорости. Внешние квоты проверяются раз в несколько секунд: возможен небольшой перерасход до отключения.
+
+## Общая подписка
+
+При первой установке создаётся пользователь **«Основная подписка»**, которому добавлены все шесть протоколов. Общая ссылка отображается в разделе **Пользователи** и выводится установщиком. Повторный запуск сохраняет пользователя, его учётные данные и ссылку. Удалённый вручную пользователь повторно автоматически не создаётся.
+
+Открыв ссылку в браузере, пользователь получает отдельные ссылки подключения. Для FreeTurn дополнительно выдаётся персональный конфиг WireGuard: локальный порт транспорта — `9000`. Машинный ответ подписки содержит ссылки по одной на строку, по умолчанию в Base64. Поддержка импорта зависит от клиента — единого клиента для всех шести протоколов не требуется.
+
+VK hash при установке не запрашивается. Для работы через **VK TURN** добавьте действующий hash в настройках основной подписки; изменения имени, hash и срока передаются связанным учётным записям. Блокировка / истечение срока основного пользователя отзывает их доступ. Индивидуальные квоты и скорость остальных протоколов настраиваются у соответствующих пользователей.
+
+## Маршрутизация Xray
+
+**Настройки Xray → Правила:**
+
+| Задача | Поле правила |
+|--------|--------------|
+| Направить весь протокол в выбранный outbound | **Inbound Tags** → `vpn-wdtt`, `vpn-qwdtt`, `vpn-wdtt-plus`, `vpn-csqtt-2.1.9`, `vpn-csqtt-2.5.0`, `vpn-freeturn` |
+| Направить отдельного пользователя | **Пользователь VPN** → имя протокола и пользователя |
+| Выбрать выход | **Outbound Tag** → нужный outbound |
+
+Адреса устройств подставляются автоматически. Индивидуальное правило ставится выше общего; общее правило протокола остаётся fallback. Идентификация VPN-пользователя поддерживается для **IPv4**. Управляемые теги `vpn-*` и локальные входы Xray создаёт контроллер; редактировать их вручную не нужно.
+
+Исходящие подключения Xray могут использовать VLESS, VMess, Trojan, Shadowsocks, SOCKS, HTTP, WireGuard, Hysteria и WARP. Отдельно сохранено создание входящих **mixed**-прокси (SOCKS/HTTP).
 
 ## Компоненты
 
-| Компонент | Описание |
-|-----------|----------|
-| **wdtt** | Unified: DTLS + WG + панель `:2860` + подписка `:2096` (один процесс `wdtt-app`) |
-| **wdtt-server** | Только VPN (legacy) |
-| **wdtt-panel** | Только панель (legacy) |
-| **wdtt-xray** | Redirect трафика `wdtt0` → outbound (NL, WARP…) |
+| Компонент | Назначение |
+|-----------|------------|
+| `wdtt.service` | Панель + обычный WDTT, бинарник `wdtt-app` |
+| `wdtt-protocol@<тип>.service` | Отдельный сервер qWDTT / Plus / CSQTT / FreeTurn |
+| `wdtt-protocol-watch.service` | Сопоставление пользователей, квоты, общая подписка, входы Xray |
+| `wdtt-xray.service` | Маршрутизация TCP/UDP |
+| `nginx` | Публичная точка входа панели и подписок |
 
-Конфиг VPN и панели: `/etc/wdtt/panel.db` (SQLite — inbound, users, settings).  
-Systemd `wdtt.service` запускает только `/usr/local/bin/wdtt-app -config-dir /etc/wdtt`.  
-Xray: `/etc/wdtt-xray/config.json`.
-
-## Сборка
+Primary-конфигурация панели — `/etc/wdtt/panel.db` (SQLite). Настройки дополнительных серверов — `/etc/wdtt/protocols/<тип>/`; состояние контроллера — `/etc/wdtt/protocols/state.json`. Конфигурация Xray на диске — `/etc/wdtt-xray/config.json`.
 
 ```bash
-# Единый бинарник server+panel (основной, systemd → /usr/local/bin/wdtt)
-./build.sh amd64 unified
-sudo ./install-local.sh amd64
-
-# Отдельно (legacy)
-./build.sh amd64 server   # wdtt-server-linux-amd64
-./build.sh amd64 panel    # wdtt-panel-linux-amd64
-./build.sh amd64 all      # всё сразу
+systemctl status wdtt wdtt-xray wdtt-protocol-watch
+journalctl -u wdtt-protocol@csqtt-2.5.0 -n 100 --no-pager
 ```
 
-Локальная разработка: `go.work` связывает корень (`pkg/`), `server/` и `panel/`.
+## Сборка и проверка
 
-Флаги CLI (fallback; в production параметры VPN — в **panel.db** / Подключения):  
-`-config-dir`, `-no-panel`, `-listen`, `-wg-port`, `-password`, `-admin-addr`, …  
-См. **[docs/SERVER.md](docs/SERVER.md)**.
+```bash
+go build -o wdtt-app ./cmd/wdtt
+python3 scripts/build-protocols.py
+python3 scripts/test_protocols.py
+go test ./pkg/... ./panel/... ./server/...
+```
+
+`go.work` связывает корень, `server/` и `panel/`. Версии внешних серверов закреплены в **[scripts/protocol-sources.json](scripts/protocol-sources.json)**. Их лицензии и сведения об исходниках сохраняются в `/usr/local/lib/wdtt/protocols/licenses/`.
 
 ## API панели
 
-Документация: **[docs/API.md](docs/API.md)** — cookie-сессии, пользователи, inbound, Xray, формат ссылок `wdtt://`.
-
-## Репозитории
-
-| Репозиторий | Назначение |
-|-------------|------------|
-| [ildarmaga/wdtt](https://github.com/ildarmaga/wdtt) | Сервер + панель + **PWDTT Client** (`pwdtt-client-*` в [релизах](https://github.com/ildarmaga/wdtt/releases/latest)) |
-| [ildarmaga/pwdtt-client](https://github.com/ildarmaga/pwdtt-client) | Исходники десктопного клиента PWDTT (модифицированная версия [luminescq/PWDTT](https://github.com/luminescq/PWDTT), GPL-3.0) |
-| [ildarmaga/wdtt-install](https://github.com/ildarmaga/wdtt-install) | Установщик одной строкой |
-| [anton48/vk-turn-proxy-ios](https://github.com/anton48/vk-turn-proxy-ios) | iOS-клиент |
-| [amurcanov/proxy-turn-vk-android](https://github.com/amurcanov/proxy-turn-vk-android) | Android-клиент / исходный VPN-протокол |
-| [kulikov0/whitelist-bypass](https://github.com/kulikov0/whitelist-bypass) | WhitelistBypass.Creator — получение VK cookies для панели |
+Документация: **[docs/API.md](docs/API.md)** — cookie-сессии, CSRF, инбаунды, пользователи, общая подписка, маршрутизация Xray и форматы ссылок.
 
 ## Лицензия
 
-[GNU GPL v3](LICENSE) — как upstream [proxy-turn-vk-android](https://github.com/amurcanov/proxy-turn-vk-android).
+Код панели — **[GNU GPL v3](LICENSE)**. Серверы дополнительных протоколов сохраняют исходные лицензии и атрибуцию.
+
+**CSQTT 2.1.9 и 2.5.0:** PolyForm Noncommercial License 1.0.0. Коммерческое использование требует отдельной письменной лицензии правообладателя. Их лицензия не заменяется лицензией панели.

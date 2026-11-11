@@ -13,25 +13,25 @@ const panelXrayInboundMetaPath = "/etc/wdtt/xray-inbounds-meta.json"
 const panelProtocolMixed = "mixed"
 
 type PanelXrayInboundMeta struct {
-	Remark      string `json:"remark"`
-	Enable      bool   `json:"enable"`
-	Total       int64  `json:"total"`
-	ExpiryTime  int64  `json:"expiryTime"`
+	Remark       string `json:"remark"`
+	Enable       bool   `json:"enable"`
+	Total        int64  `json:"total"`
+	ExpiryTime   int64  `json:"expiryTime"`
 	TrafficReset string `json:"trafficReset"`
 }
 
 type PanelXrayInboundRow struct {
-	Tag      string                 `json:"tag"`
-	Remark   string                 `json:"remark"`
-	Enable   bool                   `json:"enable"`
-	Protocol string                 `json:"protocol"`
-	Listen   string                 `json:"listen"`
-	Port     int                    `json:"port"`
-	Settings map[string]interface{} `json:"settings,omitempty"`
-	Sniffing map[string]interface{} `json:"sniffing,omitempty"`
-	Total    int64                  `json:"total"`
-	ExpiryTime int64                `json:"expiryTime"`
-	TrafficReset string             `json:"trafficReset"`
+	Tag          string                 `json:"tag"`
+	Remark       string                 `json:"remark"`
+	Enable       bool                   `json:"enable"`
+	Protocol     string                 `json:"protocol"`
+	Listen       string                 `json:"listen"`
+	Port         int                    `json:"port"`
+	Settings     map[string]interface{} `json:"settings,omitempty"`
+	Sniffing     map[string]interface{} `json:"sniffing,omitempty"`
+	Total        int64                  `json:"total"`
+	ExpiryTime   int64                  `json:"expiryTime"`
+	TrafficReset string                 `json:"trafficReset"`
 }
 
 type PanelXrayInboundSaveRequest struct {
@@ -51,6 +51,9 @@ type PanelXrayInboundSaveRequest struct {
 
 func isProtectedInboundTag(tag string) bool {
 	tag = strings.TrimSpace(tag)
+	if isProtocolInbound(tag) {
+		return true
+	}
 	for _, t := range protectedInboundTags {
 		if tag == t {
 			return true
