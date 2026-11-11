@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import ipaddress
 import json
 import sqlite3
@@ -89,6 +90,45 @@ class ProtocolTests(unittest.TestCase):
             toggle.assert_called_once_with('qwdtt','q-password',False)
             subscription=json.loads((p.ROOT.parent/'protocol-subscriptions.json').read_text())['identity']
             self.assertEqual([c['protocol'] for c in subscription['connections']],['freeturn'])
+
+    def test_freeturn_uri_fixes_mode_and_embeds_original_wg_field(self):
+        folder=p.directory('freeturn');folder.mkdir(parents=True);(folder/'wg-public').write_text('server-public')
+        meta={'private_key':'private','ip':'10.72.0.2','public_key':'public','name':'User'}
+        with p.locked():
+            state=p.state();state['users']['freeturn']={'client-id':meta};p.save(state)
+        with patch.object(p,'users',return_value=[dict(meta,password='client-id')]), patch.object(p,'settings',return_value={'host':'vpn.example','secret':'owner','obf_key':'key','dns':'8.8.8.8'}):
+            row=p.display_users('freeturn')[0]
+        payload=json.loads(base64.urlsafe_b64decode(row['link'][len('freeturn://'):]+'==='))
+        self.assertEqual(payload['mode'],'udp');self.assertEqual(payload['transport'],'tcp')
+        self.assertEqual(payload['wg'],row['wg_config'])
+        self.assertIn('DNS = 8.8.8.8',payload['wg'])
+        self.assertEqual(payload['cid'],'client-id')
+
+    def test_profile_settings_validate_before_write_and_keep_secrets(self):
+        folder=p.directory('qwdtt');folder.mkdir(parents=True)
+        original={'host':'old.example','secret':'keep-secret','admin_token':'keep-token'}
+        p.atomic(folder/'settings.json',original)
+        with p.locked():
+            state=p.state();state['profiles']['qwdtt']=True;p.save(state)
+        for invalid in ({'subnet':'10.0.0.0/8'},{'host':'host; evil'},{'dns':'8.8.8.8,broken'},{'enabled':'false'},{'port':443}):
+            with self.assertRaises(ValueError):p.profile_update('qwdtt',invalid)
+            self.assertEqual(p.settings('qwdtt'),original)
+        with patch.object(p,'run') as run:
+            p.profile_update('qwdtt',{'remark':'New qWDTT','host':'new.example','dns':'8.8.8.8, 1.1.1.1','enabled':True})
+            run.assert_called_once_with('systemctl','restart',p.unit('qwdtt'))
+        updated=p.settings('qwdtt')
+        self.assertEqual(updated['secret'],original['secret']);self.assertEqual(updated['admin_token'],original['admin_token'])
+        self.assertEqual(updated['dns'],'8.8.8.8,1.1.1.1')
+
+    def test_profile_settings_roll_back_failed_restart(self):
+        folder=p.directory('qwdtt');folder.mkdir(parents=True)
+        original={'host':'old.example','secret':'keep-secret'}
+        p.atomic(folder/'settings.json',original)
+        with p.locked():
+            state=p.state();state['profiles']['qwdtt']=True;p.save(state)
+        with patch.object(p,'run',side_effect=[RuntimeError('restart failed'),'', '']):
+            with self.assertRaisesRegex(RuntimeError,'restart failed'):p.profile_update('qwdtt',{'dns':'8.8.8.8'})
+        self.assertEqual(p.settings('qwdtt'),original)
 
     def test_global_traffic_reset_is_idempotent(self):
         with p.locked():

@@ -14,8 +14,7 @@
     <a-dropdown :trigger="['click']">
      <a-icon type="more" style="font-size:16px;cursor:pointer" tabindex="0" role="button" @keydown.enter.prevent="$event.currentTarget.click()" @keydown.space.prevent="$event.currentTarget.click()" :aria-label="'Действия: '+row.name"></a-icon>
      <a-menu slot="overlay" :theme="themeSwitcher.currentTheme">
-      <a-menu-item v-if="row.id==='wdtt'" @click="$emit('edit-wdtt')"><a-icon type="edit"></a-icon>Изменить</a-menu-item>
-      <a-menu-item @click="select(row)"><a-icon type="team"></a-icon>Пользователи</a-menu-item>
+      <a-menu-item @click="edit(row)"><a-icon type="edit"></a-icon>Изменить</a-menu-item>
       <a-menu-item @click="deleteProfile(row)"><span style="color:#ff4d4f"><a-icon type="delete"></a-icon>Удалить</span></a-menu-item>
      </a-menu>
     </a-dropdown>
@@ -27,13 +26,23 @@
    <template slot="users" slot-scope="_,row"><a @click="select(row)"><a-tag color="green" style="margin:0">[[ row.users || 0 ]]</a-tag></a></template>
    <template slot="total" slot-scope="_,row"><a-tag color="green" style="margin:0">[[ bytes(row.traffic_bytes || 0) ]] / ∞</a-tag></template>
   </a-table>
+  <a-modal :class="themeSwitcher.currentTheme" v-model="editing" :title="'Изменить — '+(selected && selected.name || '')" :confirm-loading="busy" @ok="saveSettings" ok-text="Сохранить" cancel-text="Закрыть">
+    <a-form layout="vertical">
+      <a-form-item label="Включить"><a-switch v-model="form.enabled"></a-switch></a-form-item>
+      <a-form-item label="Примечание"><a-input v-model.trim="form.remark" :max-length="128"></a-input></a-form-item>
+      <a-form-item label="Адрес в ссылке"><a-input v-model.trim="form.host" placeholder="IPv4 или домен без порта"></a-input></a-form-item>
+      <a-form-item label="DNS клиента"><a-input v-model.trim="form.dns" placeholder="DNS сервера по умолчанию"></a-input><div class="text-muted" style="font-size:12px;margin-top:4px">Один или два IPv4 через запятую. Обновите конфиг клиента после смены DNS. Для qWDTT, Plus и CSQTT инбаунд перезапустится.</div></a-form-item>
+      <a-form-item label="UDP-порты"><a-input :value="selected ? selected.ports.join(', ') : ''" disabled></a-input></a-form-item>
+      <a-form-item label="Подсеть"><a-input :value="selected ? selected.subnets.join(', ') : ''" disabled></a-input></a-form-item>
+    </a-form>
+  </a-modal>
  </a-card>
 </script>
 <script>
 Vue.component('protocol-manager', {
  template:'#protocol-manager-template', delimiters:['[[',']]'],
  data(){return {
-  themeSwitcher,profiles:[],busy:false,error:'',
+  themeSwitcher,profiles:[],busy:false,error:'',editing:false,selected:null,form:{},
   columns:[{title:'ID',dataIndex:'display_id',width:48,align:'center'},{title:'Меню',scopedSlots:{customRender:'operate'},width:60,align:'center'},{title:'Включить',scopedSlots:{customRender:'enable'},width:86,align:'center'},{title:'Примечание',dataIndex:'name',width:150},{title:'Порт',scopedSlots:{customRender:'ports'},width:160,align:'center'},{title:'Протокол',scopedSlots:{customRender:'protocol'},width:200,align:'center'},{title:'Подсеть',scopedSlots:{customRender:'subnet'},width:145,align:'center'},{title:'Пользователи',scopedSlots:{customRender:'users'},width:105,align:'center'},{title:'Трафик',scopedSlots:{customRender:'total'},width:130,align:'center'}],
 
  }},
@@ -43,6 +52,8 @@ Vue.component('protocol-manager', {
   async load(){await this.perform(async()=>{const result=await HttpUtil.get('/panel/api/protocols');if(!result.success)throw new Error(result.msg);this.profiles=result.obj;});},
   async change(row,op){await this.perform(async()=>{await this.call({op,protocol:row.id});});await this.load();},
   deleteProfile(row){this.$confirm({title:'Удалить '+row.name+'?',content:'Настройки и пользователи сохранятся для повторного создания.',okText:'Удалить',cancelText:'Отмена',okType:'danger',onOk:()=>this.change(row,'delete')});},
+  edit(row){if(row.id==='wdtt'){this.$emit('edit-wdtt');return;}this.selected=row;this.form={remark:row.name,host:row.host,dns:row.dns||'',enabled:row.enabled};this.editing=true;},
+  async saveSettings(){await this.perform(async()=>{await this.call({...this.form,op:'update',protocol:this.selected.id});this.editing=false;});await this.load();},
   select(){location.href=basePath+'panel/users';},
   bytes(value){if(!value)return '0 Б';const n=Math.min(4,Math.floor(Math.log(value)/Math.log(1024)));return (value/1024**n).toFixed(n?2:0)+' '+['Б','КиБ','МиБ','ГиБ','ТиБ'][n];}
  },mounted(){this.load();}

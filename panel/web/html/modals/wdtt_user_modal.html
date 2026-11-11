@@ -1,4 +1,8 @@
 {{define "modals/wdttUserModal"}}
+<style>
+.user-share-qr-popover .ant-popover-inner { overflow:visible !important; }
+.user-share-qr-popover .ant-popover-inner-content { max-height:calc(100vh - 40px) !important; overflow:auto; }
+</style>
 <a-modal id="user-modal" v-model="userModal.visible"
   :title="userModal.isMain ? 'Основная подписка — ADMIN' : (userModal.isEdit ? 'Редактировать пользователя' : 'Добавить пользователя')"
   :confirm-loading="userModal.saving" :closable="true" :mask-closable="false"
@@ -120,59 +124,30 @@
       </a-form>
     </a-tab-pane>
     <a-tab-pane key="conn" tab="Подключение" :forceRender="true">
-      <a-row :gutter="[16, 16]">
-        <a-col :xs="24" :md="14">
-          <div v-if="userForm.inbounds.includes('wdtt')" class="user-conn-block">
-            <div class="user-conn-label">Ссылка WDTT</div>
-            <code class="user-conn-code user-conn-code--copy" title="Нажмите чтобы скопировать"
-              @click="copyField(connLink, 'Ссылка')">[[ connLink ]]</code>
-            <div class="user-conn-hint">Нажмите на поле — копируется в буфер</div>
-          </div>
-          <div v-if="userForm.sub_url" class="user-conn-block" style="margin-top:16px">
-            <div class="user-conn-label">
-              Подписка
-              <a class="user-conn-open-link" href="#" @click.prevent="openSubUrl">Открыть</a>
-            </div>
-            <code class="user-conn-code user-conn-code--copy" title="Нажмите чтобы скопировать"
-              @click="copyField(userForm.sub_url, 'Подписка')">[[ userForm.sub_url ]]</code>
-          </div>
-
-          <div v-for="connection in userForm.connections.filter(c=>userForm.inbounds.includes(c.protocol))" :key="connection.protocol" class="user-conn-client" style="margin-top:16px">
-            <div class="user-conn-client-name">[[ connection.title ]]</div>
-            <code class="user-conn-code user-conn-code--copy" @click="copyField(connection.link, connection.title)">[[ connection.link ]]</code>
-            <a-textarea v-if="connection.wg_config" :value="connection.wg_config" read-only :rows="10" aria-label="Конфигурация WireGuard FreeTurn"></a-textarea>
-          </div>
-          <div v-if="userForm.inbounds.includes('wdtt')" class="user-conn-clients-title">Совместимые клиенты WDTT</div>
-          <div v-for="cl in (userForm.inbounds.includes('wdtt') ? clientLinks : [])" :key="cl.key" class="user-conn-client">
-            <div class="user-conn-client-name">
-              <a :href="cl.repo" target="_blank" rel="noopener" @click.stop>[[ cl.title ]]</a>
-              <span class="text-muted"> — [[ cl.hint ]]</span>
-            </div>
-            <code v-if="cl.value && cl.value !== '—'" class="user-conn-code user-conn-code--copy"
-              title="Нажмите чтобы скопировать"
-              @click="copyField(cl.value, cl.title)">[[ cl.value ]]</code>
-            <code v-else class="user-conn-code text-muted">—</code>
-          </div>
-        </a-col>
-        <a-col :xs="24" :md="10">
-          <div class="qr-modal" style="justify-content:center">
-            <div v-if="userForm.sub_url" class="qr-box">
-              <a class="qr-bg-sub cursor-pointer" @click.prevent="copyField(userForm.sub_url, 'Подписка')" :title="userForm.sub_url">
-                <div class="qr-bg-sub-inner">
-                  <canvas id="wdtt-user-sub-qr" class="qr-cv"></canvas>
+      <div v-for="entry in shareEntries" :key="entry.id" class="user-conn-block" style="margin-bottom:18px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
+          <span>[[ entry.title ]]</span>
+          <a-space style="width:auto;flex:0 0 auto;margin-left:auto">
+            <a-button v-if="entry.id==='subscription'" size="small" icon="link" @click="openSubUrl" aria-label="Открыть подписку"></a-button>
+            <a-button size="small" icon="copy" @click="copyField(entry.value,entry.title)" :aria-label="'Скопировать: '+entry.title"></a-button>
+            <a-popover trigger="click" placement="bottomRight" :visible="qrVisible===entry.id" v-on="{visibleChange:visible=>setQRVisible(entry.id,visible)}" :destroy-tooltip-on-hide="true" :overlay-class-name="themeSwitcher.currentTheme+' user-share-qr-popover'">
+              <template slot="content">
+                <div style="width:280px;max-width:calc(100vw - 64px);text-align:center">
+                  <div style="margin-bottom:8px">[[ entry.title ]]</div>
+                  <canvas role="button" tabindex="0" title="Скопировать QR-код" @click="copyShareQR(entry)" @keydown.enter.prevent="copyShareQR(entry)" @keydown.space.prevent="copyShareQR(entry)" :id="'user-share-qr-'+entry.id" style="width:100%;height:auto;background:white;border-radius:8px" :aria-label="'QR: '+entry.title"></canvas>
+                  <a-space style="margin-top:12px">
+                    <a-button icon="copy" @click="copyField(entry.value,entry.title)">Ссылка</a-button>
+                    <a-button icon="copy" @click="copyShareQR(entry)">QR-код</a-button>
+                  </a-space>
                 </div>
-              </a>
-              <a-tag class="qr-tag" color="green">Подписка</a-tag>
-            </div>
-            <div v-if="userForm.inbounds.includes('wdtt')" class="qr-box">
-              <a class="qr-bg cursor-pointer" @click.prevent="copyField(connLink, 'Ссылка')" :title="connLink">
-                <canvas id="wdtt-user-share-qr" class="qr-cv"></canvas>
-              </a>
-              <a-tag class="qr-tag" color="blue">Конфиг wdtt://</a-tag>
-            </div>
-          </div>
-        </a-col>
-      </a-row>
+              </template>
+              <a-button size="small" icon="qrcode" @click="openShareQR(entry)" :aria-label="'Открыть QR: '+entry.title"></a-button>
+            </a-popover>
+          </a-space>
+        </div>
+        <code class="user-conn-code user-conn-code--copy" style="max-height:76px;overflow:auto" @click="copyField(entry.value,entry.title)" :title="'Скопировать: '+entry.title">[[ entry.value ]]</code>
+      </div>
+      <a-empty v-if="!shareEntries.length" description="Сохраните пользователя, чтобы получить конфиги"></a-empty>
     </a-tab-pane>
   </a-tabs>
 </a-modal>
@@ -218,12 +193,10 @@
     showLink(row, serverIp, inbound) {
       this.showEdit(row, serverIp, inbound);
       this.activeTab = 'conn';
-      userModalApp.scheduleRenderQR();
     },
     close() {
       this.visible = false;
       this.saving = false;
-      userModalApp.resetQR();
     },
     async save() {
       await userModalApp.saveUser();
@@ -236,10 +209,9 @@
     data: {
       userModal,
       protocolOptions: [{id:'wdtt',name:'WDTT'},{id:'qwdtt',name:'qWDTT'},{id:'wdtt-plus',name:'WDTT Plus'},{id:'csqtt-2.1.9',name:'CSQTT 2.1.9'},{id:'csqtt-2.5.0',name:'CSQTT 2.5.0'},{id:'freeturn',name:'FreeTurn'}],
+      qrVisible: '',
       apiLink: '',
       linkSnapshot: null,
-      qrInstance: null,
-      subQrInstance: null,
       userForm: {
         inbounds: [],
         connections: [],
@@ -322,92 +294,19 @@
       connVkHashCount() {
         return wdttParseVkHashes(this.connVkHash).length;
       },
-      connBaseOpts() {
-        const p = this.connPorts;
-        const name = (this.userForm.comment || '').trim() || 'WDTT';
-        return {
-          host: this.connHost,
-          password: this.userForm.password,
-          vkHash: this.connVkHash,
-          name: name,
-          dtls: p.dtls,
-          wg: p.wg,
-          port: p.client,
-        };
-      },
-      clientLinks() {
-        const o = this.connBaseOpts;
-        if (!o.host || !o.password) return [];
-        return [
-          {
-            key: 'ios',
-            title: 'iOS — VK Turn Proxy',
-            repo: 'https://github.com/anton48/vk-turn-proxy-ios',
-            hint: 'wdtt:// colon, только 1-й хеш (клиент не поддерживает несколько)',
-            value: wdttBuildColonLink({ ...o, localPort: 0, withName: false, hashLimit: 1 }),
-          },
-          {
-            key: 'android',
-            title: 'Android — WDTT',
-            repo: 'https://github.com/amurcanov/proxy-turn-vk-android',
-            hint: 'wdtt:// colon, до 4 хешей через запятую или VK_HASH',
-            value: wdttBuildColonLink({ ...o, localPort: o.port || 9000, withName: false }),
-          },
-          {
-            key: 'pwdtt',
-            title: 'PWDTT — Desktop Win/Linux',
-            repo: 'https://github.com/luminescq/PWDTT',
-            hint: 'wdtt:// colon, до 4 хешей через запятую или VK_HASH',
-            value: wdttBuildColonLink({ ...o, localPort: 0, withName: true }),
-          },
-          {
-            key: 'windows',
-            title: 'WDTT — Windows',
-            repo: 'https://github.com/IGOR7276/proxy-turn-vk-windows',
-            hint: 'wdtt:// colon, до 4 хешей через запятую или VK_HASH',
-            value: wdttBuildColonLink({ ...o, localPort: 0, withName: true }),
-          },
-          {
-            key: 'qwdtt',
-            title: 'qWDTT — Android fork',
-            repo: 'https://github.com/SpaceNeuroX/proxy-turn-vk-android',
-            hint: 'qwdtt://, hashes=h1,h2,… (bare, до 4) или VK_HASH',
-            value: wdttBuildQwdttLink(o),
-          },
-          {
-            key: 'qwdtt_win',
-            title: 'WDTT Windows — qwdtt',
-            repo: 'https://github.com/IGOR7276/proxy-turn-vk-windows',
-            hint: 'qwdtt://, hashes=h1,h2,… (bare, до 4) или VK_HASH',
-            value: wdttBuildQwdttLink(o),
-          },
-        ];
+      shareEntries() {
+        const entries=[];
+        if(this.userForm.sub_url) entries.push({id:'subscription',title:'Подписка',value:this.userForm.sub_url});
+        if(this.userForm.inbounds.includes('wdtt') && this.connLink && this.connLink!=='—') entries.push({id:'wdtt',title:'WDTT',value:this.connLink});
+        for(const connection of this.userForm.connections || []) {
+          if(this.userForm.inbounds.includes(connection.protocol) && connection.link) entries.push({id:connection.protocol,title:connection.title,value:connection.link});
+        }
+        return entries;
       },
     },
     watch: {
-      connLink() {
-        if (this.userModal.activeTab === 'conn' && this.userModal.visible) {
-          this.scheduleRenderQR();
-        }
-      },
-      'userForm.sub_url'() {
-        if (this.userModal.activeTab === 'conn' && this.userModal.visible) {
-          this.scheduleRenderQR();
-        }
-      },
-      'userModal.activeTab'(tab) {
-        if (tab === 'conn' && this.userModal.visible) {
-          this.scheduleRenderQR();
-        }
-      },
-      'userModal.visible'(v) {
-        if (v && this.userModal.activeTab === 'conn') {
-          this.scheduleRenderQR();
-        }
-        if (!v) {
-          this.resetQR();
-        }
-      },
+      'userModal.visible'(visible) { if(!visible)this.qrVisible=''; },
+      shareEntries() { this.$nextTick(()=>this.shareEntries.forEach(entry=>this.renderShareQR(entry))); },
       'userForm.unlimited'(v) {
         if (v) {
           this.userForm.expiryDate = null;
@@ -420,31 +319,28 @@
       },
     },
     methods: {
-      resetQR() {
-        this.qrInstance = null;
-        this.subQrInstance = null;
+      setQRVisible(id,visible) { if(visible)this.qrVisible=id;else if(this.qrVisible===id)this.qrVisible=''; },
+      openShareQR(entry) {
+        this.$nextTick(()=>setTimeout(()=>this.renderShareQR(entry),60));
       },
-      scheduleRenderQR() {
-        this.$nextTick(() => {
-          setTimeout(() => this.renderQR(), 80);
-        });
+      renderShareQR(entry) {
+        const canvas=document.getElementById('user-share-qr-'+entry.id);
+        if(!canvas || typeof QRious==='undefined') return;
+        try { new QRious({element:canvas,value:entry.value,size:384,padding:16,level:'L'}); }
+        catch(error) { this.$message.error('Не удалось построить QR-код'); }
       },
-      drawQrCanvas(canvasId, value, instKey, size) {
-        const el = document.getElementById(canvasId);
-        if (!el || typeof QRious === 'undefined') return;
-        const v = (value || '').trim();
-        if (!v || v === '—') {
-          const ctx = el.getContext && el.getContext('2d');
-          if (ctx) ctx.clearRect(0, 0, el.width || size, el.height || size);
-          this[instKey] = null;
-          return;
+      async copyShareQR(entry) {
+        const canvas=document.getElementById('user-share-qr-'+entry.id);
+        if(!canvas) return;
+        if(!navigator.clipboard?.write || typeof ClipboardItem==='undefined') {
+          const link=document.createElement('a');link.href=canvas.toDataURL('image/png');link.download=entry.id+'-qr.png';link.click();
+          this.$message.info('Браузер не поддерживает копирование изображения. QR сохранён в PNG.');return;
         }
-        this[instKey] = new QRious({ element: el, value: v, size: size || 188 });
-      },
-      renderQR() {
-        if (typeof QRious === 'undefined') return;
-        this.drawQrCanvas('wdtt-user-share-qr', this.connLink, 'qrInstance', 188);
-        this.drawQrCanvas('wdtt-user-sub-qr', this.userForm.sub_url, 'subQrInstance', 188);
+        try {
+          const blob=new Promise((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(Error('PNG')),'image/png'));
+          await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);
+          this.$message.success('QR-код скопирован');
+        } catch(error) { this.$message.error('Не удалось скопировать QR-код: проверьте разрешение браузера на буфер обмена'); }
       },
       genPassword() {
         const arr = new Uint32Array(16);

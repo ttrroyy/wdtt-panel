@@ -27,6 +27,7 @@ def replace(path, old, new):
 
 def patch(root, name, pool):
     if name == 'freeturn':
+        replace(root/'cmd/server/main.go', 'd.StartHotReload(ctx, 10*time.Second)', 'd.StartHotReload(ctx, time.Second)')
         return
     folder = root / ('rust-server' if name.startswith('csqtt') else 'server' if name == 'qwdtt' else '.')
     suffix = '*.rs' if name.startswith('csqtt') else '*.go'

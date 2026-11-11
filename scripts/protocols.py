@@ -7,6 +7,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import signal
@@ -193,10 +194,11 @@ def serve(name):
         nsrun(name,'ip','link','set','ftwg0','mtu','1280','up')
         ipt('filter','FORWARD','-i','ftwg0','-j','ACCEPT',ns=name)
         ipt('filter','FORWARD','-o','ftwg0','-j','ACCEPT',ns=name)
-        args=[BIN/name,'-listen',f'0.0.0.0:{port}','-connect',f'127.0.0.1:{port+1}',
+        args=[BIN/name,'-listen',f'0.0.0.0:{port}','-connect',f'127.0.0.1:{port+1}','-mode','udp',
               '-obf-profile','rtpopus3','-obf-key',cfg['obf_key'],'-clients-file',d/'clients.json']
     else:
         raise ValueError('WDTT runs in the unified panel process')
+    if cfg.get('dns') and name!='freeturn': args += ['--dns' if name.startswith('csqtt') else '-dns',cfg['dns']]
     child=subprocess.Popen(['ip','netns','exec',namespace(name),*[str(a) for a in args]],env=env)
     def stop(*_):
         child.terminate()
@@ -358,8 +360,8 @@ def display_users(name):
             hashes=[value.strip() for value in (row.get('vk_hashes') or row.get('vk_hash','')).split(',') if value.strip()]
             if hashes: row['link']+='&hashes='+'+'.join(urllib.parse.quote(value,safe='') for value in hashes)
         elif name=='freeturn':
-            payload={'v':1,'provider':'vk','peer':f'{cfg["host"]}:{port}','obf':'rtpopus3','key':cfg['obf_key'],'cid':password,'name':row['name']}
-            row['wg_config']=f'[Interface]\nPrivateKey = {meta["private_key"]}\nAddress = {meta["ip"]}/32\nDNS = 1.1.1.1\nMTU = 1280\n\n[Peer]\nPublicKey = {(directory(name)/"wg-public").read_text().strip()}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 127.0.0.1:9000\nPersistentKeepalive = 25\n'
+            payload={'v':1,'provider':'vk','mode':'udp','transport':'tcp','peer':f'{cfg["host"]}:{port}','obf':'rtpopus3','key':cfg['obf_key'],'cid':password,'name':row['name']}
+            row['wg_config']=f'[Interface]\nPrivateKey = {meta["private_key"]}\nAddress = {meta["ip"]}/32\nDNS = {cfg.get("dns") or "1.1.1.1"}\nMTU = 1280\n\n[Peer]\nPublicKey = {(directory(name)/"wg-public").read_text().strip()}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 127.0.0.1:9000\nPersistentKeepalive = 25\n'
             payload['wg']=row['wg_config'];payload['listen']='127.0.0.1:9000'
             hashes=[value.strip() for value in meta.get('vk_hash','').split(',') if value.strip()]
             if hashes: payload['vk']=','.join(value if '://' in value else 'https://vk.com/call/join/'+value for value in hashes)
@@ -510,6 +512,9 @@ def profile_list():
     rows=[]
     for name,p in PROFILES.items():
         row=dict(p,id=name,tag='vpn-'+name,subnet=f'10.{p["pool"]}.0.0/16',present=bool(s['profiles'].get(name)))
+        if name!='wdtt' and (directory(name)/'settings.json').exists():
+            cfg=settings(name)
+            row.update(name=cfg.get('remark') or p['name'],host=cfg['host'],dns=cfg.get('dns',''))
         if name=='wdtt' and native: row['port']=native[0]
         row['display_id']=p['index']+1
         row['enabled']=not s.get('disabled',{}).get(name,False)
@@ -589,6 +594,47 @@ def selected_protocols(master,bundle):
         selected=['wdtt']+list(bundle.get('members',{}))
         db.execute('INSERT INTO vpn_user_inbounds(sub_id,protocols) VALUES(?,?)',(master['sub_id'],json.dumps(selected)))
         return selected
+
+
+def profile_update(name,data):
+    spec(name)
+    if name=='wdtt': raise ValueError('Используйте настройки инбаунда WDTT')
+    allowed={'op','protocol','remark','host','dns','enabled'}
+    if set(data)-allowed: raise ValueError('Подсети, порты и служебные параметры защищены от изменения')
+    previous=settings(name); cfg=dict(previous)
+    remark=data.get('remark',cfg.get('remark') or spec(name)['name'])
+    host=data.get('host',cfg['host'])
+    dns=data.get('dns',cfg.get('dns',''))
+    if not all(isinstance(value,str) for value in (remark,host,dns)): raise ValueError('Некорректный формат настроек')
+    remark=remark.strip();host=host.strip().lower();dns=dns.strip()
+    if not remark or len(remark)>128: raise ValueError('Примечание: от 1 до 128 символов')
+    try:
+        if ipaddress.ip_address(host).version!=4: raise ValueError('Укажите IPv4 или домен')
+    except ValueError:
+        if len(host)>253 or not all(re.fullmatch(r'(?!-)[a-z0-9-]{1,63}(?<!-)',label) for label in host.split('.')):
+            raise ValueError('Укажите IPv4 или корректный домен без порта и пути')
+    if dns:
+        addresses=[value.strip() for value in dns.split(',')]
+        if not 1<=len(addresses)<=2: raise ValueError('Укажите один или два IPv4 DNS через запятую')
+        try: dns=','.join(str(ipaddress.IPv4Address(value)) for value in addresses)
+        except ValueError: raise ValueError('DNS должны быть IPv4-адресами') from None
+    with locked():
+        current=state()
+        if not current['profiles'].get(name): raise ValueError('Сначала создайте инбаунд')
+        was_enabled=not current.get('disabled',{}).get(name,False)
+    enabled=data.get('enabled',was_enabled)
+    if not isinstance(enabled,bool): raise ValueError('Включить: требуется логическое значение')
+    cfg.update(remark=remark,host=host,dns=dns)
+    atomic(directory(name)/'settings.json',cfg)
+    try:
+        if enabled!=was_enabled: profile_toggle(name,enabled)
+        elif enabled and name!='freeturn' and dns!=previous.get('dns',''): run('systemctl','restart',unit(name))
+    except Exception:
+        atomic(directory(name)/'settings.json',previous)
+        profile_toggle(name,was_enabled)
+        if was_enabled: run('systemctl','restart',unit(name))
+        raise
+    return {}
 
 
 def seed_default_subscription():
@@ -848,6 +894,7 @@ def api(data):
             save(s)
         return {}
     spec(name)
+    if operation=='update': return profile_update(name,data)
     if operation=='create': profile_create(name,str(data.get('host','')))
     elif operation=='delete': profile_delete(name)
     elif operation in ('enable','disable'): profile_toggle(name,operation=='enable')

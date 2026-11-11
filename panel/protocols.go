@@ -35,7 +35,7 @@ func (a *App) handleProtocols(w http.ResponseWriter, r *http.Request) {
 	}
 	op, _ := req["op"].(string)
 	switch op {
-	case "list", "create", "delete", "enable", "disable":
+	case "list", "create", "delete", "enable", "disable", "update":
 	default:
 		jsonError(w, "Пользователи управляются через /panel/api/users", 400)
 		return
