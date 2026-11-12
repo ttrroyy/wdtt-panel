@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 [[ $(id -u) == 0 ]] || { echo 'Запустите установщик от root.' >&2; exit 1; }
 . /etc/os-release
-case "$ID:$VERSION_ID" in debian:12|debian:13|ubuntu:22.04|ubuntu:24.04) ;; *) echo 'Поддерживаются Debian 12/13 и Ubuntu 22.04/24.04 LTS.' >&2; exit 1;; esac
+case "$ID:$VERSION_ID" in debian:12|debian:13|ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) ;; *) echo 'Поддерживаются Debian 12/13 и Ubuntu 22.04/24.04/26.04 LTS.' >&2; exit 1;; esac
 SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)
 if [[ "${1:-}" == uninstall && -f /usr/local/lib/wdtt/uninstall.py ]]; then
     exec python3 /usr/local/lib/wdtt/uninstall.py
