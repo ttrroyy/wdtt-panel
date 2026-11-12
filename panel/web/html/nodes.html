@@ -1,0 +1,48 @@
+{{ template "page/head_start" .}}
+{{ template "page/head_end" .}}
+{{ template "page/body_start" .}}
+<a-layout id="app" v-cloak :class="themeSwitcher.currentTheme+' nodes-page'">
+ <wdtt-sidebar></wdtt-sidebar><a-layout id="content-layout"><a-layout-content style="margin:24px 16px;min-width:0">
+  <a-card title="Ноды">
+   <a-button slot="extra" icon="sync" :loading="loading" @click="load" aria-label="Обновить ноды"></a-button>
+   <a-alert v-if="error" :message="error" type="error" show-icon style="margin-bottom:16px"></a-alert>
+   <a-button type="primary" icon="plus" @click="visible=true" style="margin-bottom:16px">Добавить ноду</a-button>
+   <div v-if="!nodes.length" class="fleet-empty">Подключите VPS, которая будет обслуживать инбаунды и пользователей.</div>
+   <div class="fleet-list"><div v-for="node in nodes" :key="node.id" class="fleet-row">
+    <div class="fleet-row-main"><strong>[[ node.name ]]</strong><div class="fleet-muted">[[ node.address ]]<span v-if="node.id!=='local'"> · SSH [[ node.ssh_port ]]</span></div><div class="fleet-muted" v-if="node.fingerprint">[[ node.fingerprint ]]</div><div v-if="node.error" role="alert" style="color:var(--danger-color);overflow-wrap:anywhere">[[ node.error ]]</div></div>
+    <div class="fleet-actions"><a-tag>[[ node.status==='ready'?(node.error?'Недоступна':'Подключена'):node.status==='installing'?'Устанавливается':'Подключение' ]]</a-tag><a-button v-if="node.status==='ready'" icon="api" @click="openNode(node)">Инбаунды</a-button><a-popconfirm v-if="node.id!=='local'" title="Отвязать ноду? Её службы продолжат работать на VPS." ok-text="Отвязать" cancel-text="Отмена" @confirm="remove(node)"><a-button icon="disconnect" aria-label="Отвязать ноду"></a-button></a-popconfirm></div>
+   </div></div>
+  </a-card>
+  <a-modal :class="themeSwitcher.currentTheme+' fleet-modal'" v-model="visible" title="Добавить ноду" :confirm-loading="saving" @ok="save" ok-text="Подключить" cancel-text="Закрыть">
+   <a-form layout="vertical">
+    <a-form-item label="Название"><a-input v-model.trim="form.name" :max-length="128" placeholder="Например, Нидерланды"></a-input></a-form-item>
+    <a-form-item label="Подключение"><a-radio-group v-model="form.transport" @change="form.deploy=form.transport==='ssh'"><a-radio-button value="ssh">SSH</a-radio-button><a-radio-button value="api">API-ключ</a-radio-button></a-radio-group></a-form-item>
+    <template v-if="form.transport==='ssh'">
+    <a-form-item label="IP или домен VPS"><a-input v-model.trim="form.address" placeholder="203.0.113.10" autocomplete="off"></a-input></a-form-item>
+    <a-form-item label="SSH-порт"><a-input-number v-model="form.ssh_port" :min="1" :max="65535" style="width:100%"></a-input-number></a-form-item>
+    <a-form-item label="Пароль root для первого подключения"><a-input-password v-model="form.password" autocomplete="new-password"></a-input-password></a-form-item>
+    <a-form-item><a-checkbox v-model="form.deploy">Установить ноду на этой VPS</a-checkbox></a-form-item>
+    <a-alert type="info" show-icon :message="form.deploy?'Будет установлена только нода с готовыми ядрами. Веб-панель на ней не создаётся.':'Подключается VPS, на которой уже выполнена установка в режиме node.'" description="После первого входа управление использует отдельный SSH-ключ. Пароль не сохраняется; ключ SSH-сервера закрепляется за нодой."></a-alert>
+    </template>
+    <template v-else>
+     <a-form-item label="HTTPS-адрес ноды"><a-input v-model.trim="form.api_url" placeholder="https://node.example.org"></a-input></a-form-item>
+     <a-form-item label="API-ключ ноды"><a-input-password v-model.trim="form.api_key" autocomplete="new-password"></a-input-password></a-form-item>
+     <p class="fleet-muted">На ноде выполните wdtt-node-key и вставьте созданный ключ сюда. Нода должна быть установлена с публичным HTTPS-адресом.</p>
+    </template>
+   </a-form>
+  </a-modal>
+ </a-layout-content></a-layout>
+</a-layout>
+{{ template "page/body_scripts" .}}
+{{ template "component/aThemeSwitch" .}}
+{{ template "component/wdttSidebar" .}}
+{{ template "component/fleet" .}}
+<script>
+const app=new Vue({el:'#app',delimiters:['[[',']]'],data:{themeSwitcher,nodes:[],loading:false,saving:false,error:'',visible:false,form:{name:'',transport:'ssh',address:'',ssh_port:22,password:'',deploy:true,api_url:'',api_key:''},timer:null},methods:{
+ async load(){this.loading=true;this.error='';try{const data=await fleetRequest('nodes');this.nodes=data.nodes}catch(e){this.error=e.message}finally{this.loading=false}},
+ async save(){this.saving=true;try{await fleetRequest('nodes',{op:'add',...this.form});this.visible=false;this.$message.success(this.form.deploy?'Установка ноды запущена':'Нода подключена');await this.load()}catch(e){this.$message.error(e.message)}finally{this.form.password='';this.form.api_key='';this.saving=false}},
+ async remove(node){try{await fleetRequest('nodes',{op:'delete',node_id:node.id});await this.load()}catch(e){this.$message.error(e.message)}},
+ openNode(node){location.href=basePath+'panel/connections?node='+encodeURIComponent(node.id)}
+},mounted(){this.load();this.timer=setInterval(()=>{if(!this.loading&&!this.saving)this.load()},10000)},beforeDestroy(){clearInterval(this.timer)}});
+</script>
+{{ template "page/body_end" .}}

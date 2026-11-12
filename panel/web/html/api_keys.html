@@ -1,0 +1,27 @@
+{{ template "page/head_start" .}}
+{{ template "page/head_end" .}}
+{{ template "page/body_start" .}}
+<a-layout id="app" v-cloak :class="themeSwitcher.currentTheme"><wdtt-sidebar></wdtt-sidebar><a-layout id="content-layout"><a-layout-content style="margin:24px 16px;min-width:0">
+ <a-card title="API-ключи">
+  <a-button type="primary" icon="plus" @click="visible=true" style="margin-bottom:16px">Создать API-ключ</a-button>
+  <a-alert v-if="error" :message="error" type="error" show-icon style="margin-bottom:16px"></a-alert>
+  <div class="fleet-empty" v-if="!keys.length">Ключи дают программный доступ без пароля панели. Для привязки удалённой ноды нужен ключ, созданный на самой ноде.</div>
+  <div class="fleet-list"><div v-for="key in keys" :key="key.id" class="fleet-row"><div class="fleet-row-main"><strong>[[ key.name ]]</strong><div class="fleet-muted">[[ scopeName(key.scope) ]] · [[ key.expires_at ? new Date(key.expires_at*1000).toLocaleDateString() : 'Без срока действия' ]]</div></div><a-popconfirm title="Отозвать ключ? Доступ по нему прекратится сразу." ok-text="Отозвать" cancel-text="Отмена" @confirm="remove(key)"><a-button icon="delete">Отозвать</a-button></a-popconfirm></div></div>
+ </a-card>
+ <a-modal :class="themeSwitcher.currentTheme+' fleet-modal'" v-model="visible" title="Создать API-ключ" :confirm-loading="saving" @ok="save" ok-text="Создать" cancel-text="Закрыть"><a-form layout="vertical"><a-form-item label="Название"><a-input v-model.trim="form.name" :max-length="128"></a-input></a-form-item><a-form-item label="Права"><a-select v-model="form.scope" :dropdown-class-name="themeSwitcher.currentTheme"><a-select-option value="read">Чтение API панели</a-select-option><a-select-option value="manage">Управление через API панели</a-select-option><a-select-option value="node">Управление нодой</a-select-option></a-select></a-form-item><a-form-item label="Срок действия"><a-select v-model="days" :dropdown-class-name="themeSwitcher.currentTheme"><a-select-option :value="0">Бессрочно</a-select-option><a-select-option :value="30">30 дней</a-select-option><a-select-option :value="90">90 дней</a-select-option><a-select-option :value="365">Год</a-select-option></a-select></a-form-item></a-form></a-modal>
+ <a-modal :class="themeSwitcher.currentTheme+' fleet-modal'" :visible="!!secret" title="Сохраните ключ" @cancel="secret=''" :footer="null"><a-alert type="info" show-icon message="Ключ показывается один раз. После закрытия восстановить его нельзя." style="margin-bottom:16px"></a-alert><a-textarea :value="secret" readonly :auto-size="{minRows:2,maxRows:4}"></a-textarea><a-button type="primary" icon="copy" @click="copy" style="margin-top:12px">Скопировать</a-button></a-modal>
+</a-layout-content></a-layout></a-layout>
+{{ template "page/body_scripts" .}}
+{{ template "component/aThemeSwitch" .}}
+{{ template "component/wdttSidebar" .}}
+{{ template "component/fleet" .}}
+<script>
+const app=new Vue({el:'#app',delimiters:['[[',']]'],data:{themeSwitcher,keys:[],error:'',saving:false,visible:false,secret:'',form:{name:'',scope:'read'},days:90},methods:{
+ scopeName(s){return({read:'Чтение панели',manage:'Управление панелью',node:'Управление нодой'})[s]||s},
+ async load(){try{this.keys=await fleetRequest('api-keys');this.error=''}catch(e){this.error=e.message}},
+ async save(){this.saving=true;try{const data=await fleetRequest('api-keys',{op:'create',...this.form,expires_at:this.days?Math.floor(Date.now()/1000)+this.days*86400:0});this.secret=data.secret;this.visible=false;this.form.name='';await this.load()}catch(e){this.$message.error(e.message)}finally{this.saving=false}},
+ async remove(key){try{await fleetRequest('api-keys',{op:'delete',id:key.id});await this.load()}catch(e){this.$message.error(e.message)}},
+ async copy(){try{await navigator.clipboard.writeText(this.secret);this.$message.success('Ключ скопирован')}catch(e){this.$message.error('Выделите и скопируйте ключ вручную')}}
+},mounted(){this.load()}});
+</script>
+{{ template "page/body_end" .}}

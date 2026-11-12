@@ -21,7 +21,7 @@
             <template #title>{{ i18n "pages.settings.panelListeningIP"}}</template>
             <template #description>{{ i18n "pages.settings.panelListeningIPDesc"}}</template>
             <template #control>
-                <a-input type="text" v-model="allSetting.webListen"></a-input>
+                <a-input type="text" value="127.0.0.1" disabled></a-input>
             </template>
         </a-setting-list-item>
         <a-setting-list-item paddings="small">

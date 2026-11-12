@@ -37,22 +37,22 @@ func inboundAPIPayload(a *App, cfg WdttInboundConfig) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{
-		"configured":        isWdttInboundConfigured(),
-		"tag":               cfg.Tag,
-		"enable":            cfg.Enable,
-		"listen_host":      cfg.ListenHost,
-		"dtls_port":        cfg.DtlsPort,
-		"wg_port":           cfg.WgPort,
-		"server_ip":        a.serverIP(),
-		"default_link_host": a.defaultLinkHost(),
-		"panel_tls":        panelTLSEnabled(a.cfg),
-		"link_main":        buildWdttLink(a.resolveLinkHost(cfg), mainPass, a.cfg.SubTitle, mainVk, linkEntry, cfg, mainSub),
-		"remark":           cfg.Remark,
-		"server_host":      cfg.ServerHost,
-		"client_port":      cfg.ClientPort,
-		"dns":              cfg.DNS,
-		"mtu":              cfg.MTU,
-		"max_users":        cfg.MaxUsers,
+		"configured":            isWdttInboundConfigured(),
+		"tag":                   cfg.Tag,
+		"enable":                cfg.Enable,
+		"listen_host":           cfg.ListenHost,
+		"dtls_port":             cfg.DtlsPort,
+		"wg_port":               cfg.WgPort,
+		"server_ip":             a.serverIP(),
+		"default_link_host":     a.defaultLinkHost(),
+		"panel_tls":             panelTLSEnabled(a.cfg),
+		"link_main":             buildWdttLink(a.resolveLinkHost(cfg), mainPass, a.cfg.SubTitle, mainVk, linkEntry, cfg, mainSub),
+		"remark":                cfg.Remark,
+		"server_host":           cfg.ServerHost,
+		"client_port":           cfg.ClientPort,
+		"dns":                   cfg.DNS,
+		"mtu":                   cfg.MTU,
+		"max_users":             cfg.MaxUsers,
 		"handshake_timeout_sec": cfg.HandshakeTimeoutSec,
 		"max_dtls_per_device":   cfg.MaxDtlsPerDevice,
 		"online_timeout_sec":    cfg.OnlineTimeoutSec,
@@ -65,23 +65,23 @@ func inboundAPIPayload(a *App, cfg WdttInboundConfig) map[string]interface{} {
 		"raw_iface":             "wdtt-raw",
 		"raw_sessions":          st.RawSessions,
 		"raw_iface_up":          st.RawIfaceUp,
-		"service_active":   serviceActive,
-		"iface_up":         st.IfaceUp,
-		"iface_addr":       st.IfaceAddr,
-		"dtls_firewall":    st.DtlsFirewall,
-		"wg_firewall":      st.WgFirewall,
-		"dtls_listening":   st.DtlsListening,
-		"wg_listening":     st.WgListening,
-		"active_users":     st.ActiveUsers,
-		"total_users":      st.TotalUsers,
-		"online_users":     st.OnlineUsers,
-		"xray_active":      st.XrayActive,
-		"up_bytes":         upBytes,
-		"down_bytes":       downBytes,
-		"traffic_used":     trafficUsed,
-		"traffic_used_fmt": formatBytes(trafficUsed),
-		"up_fmt":           formatBytes(upBytes),
-		"down_fmt":         formatBytes(downBytes),
+		"service_active":        serviceActive,
+		"iface_up":              st.IfaceUp,
+		"iface_addr":            st.IfaceAddr,
+		"dtls_firewall":         st.DtlsFirewall,
+		"wg_firewall":           st.WgFirewall,
+		"dtls_listening":        st.DtlsListening,
+		"wg_listening":          st.WgListening,
+		"active_users":          st.ActiveUsers,
+		"total_users":           st.TotalUsers,
+		"online_users":          st.OnlineUsers,
+		"xray_active":           st.XrayActive,
+		"up_bytes":              upBytes,
+		"down_bytes":            downBytes,
+		"traffic_used":          trafficUsed,
+		"traffic_used_fmt":      formatBytes(trafficUsed),
+		"up_fmt":                formatBytes(upBytes),
+		"down_fmt":              formatBytes(downBytes),
 	}
 }
 
@@ -98,6 +98,9 @@ func (a *App) handleInboundGet(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", 405)
 		return
 	}
+	if proxyNodeInbound(w, r, "inbound") {
+		return
+	}
 	cfg, err := loadWdttInbound()
 	if err != nil {
 		jsonError(w, err.Error(), 500)
@@ -109,6 +112,9 @@ func (a *App) handleInboundGet(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleInboundSave(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, "method not allowed", 405)
+		return
+	}
+	if proxyNodeInbound(w, r, "inbound-save") {
 		return
 	}
 	body, err := io.ReadAll(r.Body)

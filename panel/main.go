@@ -41,20 +41,25 @@ func Run() error {
 	if acmeCronInstalled() {
 		_ = ensureAcmeCron()
 	}
-	ensureWdttXrayDirs()
-	patchWdttXrayService()
-	if err := patchXrayStatsAPIOnDisk(); err != nil {
-		log.Printf("xray stats API patch: %v", err)
-	}
-	startStatusCollector()
-	go func() {
-		for {
-			if err := syncProtocolXray(); err != nil {
-				log.Printf("protocol routing: %v", err)
-			}
-			time.Sleep(3 * time.Second)
+	if installationRole() != "panel" {
+		ensureWdttXrayDirs()
+		patchWdttXrayService()
+		if err := patchXrayStatsAPIOnDisk(); err != nil {
+			log.Printf("xray stats API patch: %v", err)
 		}
-	}()
+		startStatusCollector()
+		go func() {
+			for {
+				if err := syncProtocolXray(); err != nil {
+					log.Printf("protocol routing: %v", err)
+				}
+				time.Sleep(3 * time.Second)
+			}
+		}()
+	}
+	if installationRole() == "panel" {
+		startStatusCollector()
+	}
 
 	app := &App{cfg: cfg}
 	app.startSubscriptionServer()
@@ -68,15 +73,37 @@ func Run() error {
 	mux.HandleFunc(base+"getTwoFactorEnable", app.handleTwoFactorEnable)
 	mux.HandleFunc(base+"logout/", app.handleLogout)
 	mux.HandleFunc(base+"logout", app.handleLogout)
+	mux.HandleFunc(normalizeSubPath(cfg.SubPath), func(w http.ResponseWriter, r *http.Request) {
+		if !app.cfg.SubEnable {
+			http.NotFound(w, r)
+			return
+		}
+		app.handleSubscription(w, r)
+	})
 
 	// 3x-ui assets (как в 3x-ui: долгий кэш + gzip на уровне сервера)
 	assetsH := withCacheControl(assetsHandler(), "max-age=31536000, public")
+	mux.Handle(normalizeSubPath(cfg.SubPath)+"assets/", http.StripPrefix(normalizeSubPath(cfg.SubPath)+"assets/", assetsH))
 	mux.Handle(base+"assets/", http.StripPrefix(base+"assets/", assetsH))
 
 	// Panel pages
 	mux.HandleFunc(base+"panel/", app.serveDashboard)
 	mux.HandleFunc(base+"panel/users", app.serveUsersPage)
 	mux.HandleFunc(base+"panel/connections", app.serveConnectionsPage)
+	mux.HandleFunc(base+"panel/nodes", func(w http.ResponseWriter, r *http.Request) {
+		if app.parseSession(r) == nil {
+			http.Redirect(w, r, base, 302)
+			return
+		}
+		app.renderHTML(w, r, "nodes.html", "Ноды", nil)
+	})
+	mux.HandleFunc(base+"panel/api-keys", func(w http.ResponseWriter, r *http.Request) {
+		if app.parseSession(r) == nil {
+			http.Redirect(w, r, base, 302)
+			return
+		}
+		app.renderHTML(w, r, "api_keys.html", "API-ключи", nil)
+	})
 	mux.HandleFunc(base+"panel/xray", app.serveXrayPage)
 	mux.HandleFunc(base+"panel/settings", app.serveSettingsPage)
 
@@ -95,6 +122,8 @@ func Run() error {
 
 	// API (auth required)
 	api := base + "panel/api/"
+	mux.HandleFunc(api+"nodes", app.requireAuthCSRF(app.handleNodes))
+	mux.HandleFunc(api+"api-keys", app.requireAuthCSRF(app.handleAPIKeys))
 	mux.HandleFunc(api+"protocols", app.requireAuthCSRF(app.handleProtocols))
 	mux.HandleFunc(api+"protocol-route-options", app.requireAuthCSRF(app.handleProtocolRouteOptions))
 	mux.HandleFunc(api+"status", app.requireAuthCSRF(app.handleStatus))

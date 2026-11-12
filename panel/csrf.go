@@ -47,15 +47,23 @@ func (a *App) setCSRFCookie(w http.ResponseWriter, sess *sessionData) {
 
 func (a *App) clearCSRFCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     csrfCookie,
-		Value:    "",
-		Path:     a.cfg.basePath(),
-		MaxAge:   -1,
+		Name:   csrfCookie,
+		Value:  "",
+		Path:   a.cfg.basePath(),
+		MaxAge: -1,
 	})
 }
 
 func (a *App) requireAuthCSRF(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		scope := "manage"
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			scope = "read"
+		}
+		if validAPIKey(requestAPIKey(r), scope) {
+			next(w, r)
+			return
+		}
 		sess := a.parseSession(r)
 		if sess == nil {
 			if isAjax(r) {

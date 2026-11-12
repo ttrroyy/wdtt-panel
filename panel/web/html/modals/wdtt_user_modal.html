@@ -208,7 +208,7 @@
     el: '#user-modal',
     data: {
       userModal,
-      protocolOptions: [{id:'wdtt',name:'WDTT'},{id:'qwdtt',name:'qWDTT'},{id:'wdtt-plus',name:'WDTT Plus'},{id:'csqtt-2.1.9',name:'CSQTT 2.1.9'},{id:'csqtt-2.5.0',name:'CSQTT 2.5.0'},{id:'freeturn',name:'FreeTurn'}],
+      protocolOptions: [{id:'wdtt',name:'WDTT'},{id:'qwdtt',name:'qWDTT'},{id:'wdtt-plus',name:'WDTT Plus'},{id:'csqtt-2.1.9',name:'CSQTT 2.1.9'},{id:'csqtt-2.5.0',name:'CSQTT 2.5.0'},{id:'freeturn',name:'FreeTurn'},{id:'csqtt-2.5.3-community',name:'CSQTT 2.5.3 (community)'}],
       qrVisible: '',
       apiLink: '',
       linkSnapshot: null,
@@ -305,7 +305,11 @@
       },
     },
     watch: {
-      'userModal.visible'(visible) { if(!visible)this.qrVisible=''; },
+      async 'userModal.visible'(visible) {
+        if(!visible){this.qrVisible='';return;}
+        try {const reply=await HttpUtil.get('/panel/api/protocols?all=1');if(!reply.success)throw new Error(reply.msg);this.protocolOptions=reply.obj.filter(p=>p.present).map(p=>({id:p.id,name:p.name}));}
+        catch(error){this.$message.error('Не удалось загрузить инбаунды: '+error.message);}
+      },
       shareEntries() { this.$nextTick(()=>this.shareEntries.forEach(entry=>this.renderShareQR(entry))); },
       'userForm.unlimited'(v) {
         if (v) {

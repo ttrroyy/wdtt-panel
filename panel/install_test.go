@@ -3,6 +3,7 @@ package panel
 import (
 	"github.com/ildarmaga/wdtt/pkg/paneldb"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -21,11 +22,18 @@ func TestInstallationCreatesOneStableDefaultSubscription(t *testing.T) {
 	}
 	ensureDefaultWdttData()
 	t.Setenv("WDTT_BACKEND_PORT", "2860")
-	t.Setenv("WDTT_SUB_PORT", "2096")
-	t.Setenv("WDTT_PUBLIC_URL", "https://panel.example.com")
+	t.Setenv("WDTT_INITIAL_INBOUNDS", "wdtt,qwdtt")
+	t.Setenv("WDTT_PUBLIC_URL", "http://127.0.0.1:2860")
 	t.Setenv("WDTT_INITIAL_PASSWORD", "test-installation-password")
 	if err := ConfigureInstallation(); err != nil {
 		t.Fatal(err)
+	}
+	cfg, err := loadPanelConfig()
+	if err != nil || cfg.WebListen != "127.0.0.1" || cfg.SubListen != "127.0.0.1" || cfg.SubPort != cfg.Port || !regexp.MustCompile(`^/[A-Za-z0-9]{17,24}/$`).MatchString(cfg.SubPath) || !regexp.MustCompile(`^/[A-Za-z0-9]{17,24}/$`).MatchString(cfg.WebBasePath) || cfg.SubPath == cfg.WebBasePath || cfg.SubURI != "" {
+		t.Fatal("installation must use one loopback listener", cfg, err)
+	}
+	if panelListenAddr(&PanelConfig{WebListen: "0.0.0.0", Port: 2860}) != "127.0.0.1:2860" {
+		t.Fatal("public panel listener accepted")
 	}
 	first, err := paneldb.LoadStore(panelDB)
 	if err != nil {
@@ -48,6 +56,10 @@ func TestInstallationCreatesOneStableDefaultSubscription(t *testing.T) {
 
 	if err := ConfigureInstallation(); err != nil {
 		t.Fatal(err)
+	}
+	reinstalledCfg, _ := loadPanelConfig()
+	if reinstalledCfg.WebBasePath != cfg.WebBasePath || reinstalledCfg.SubPath != cfg.SubPath {
+		t.Fatal("reinstall changed public paths")
 	}
 	restored, err := loadWdttInbound()
 	if err != nil || restored.MaxUsers != 123 || restored.ServerHost != "vpn.example.com" {

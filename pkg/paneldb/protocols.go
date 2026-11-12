@@ -4,15 +4,37 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 )
 
-var VPNProtocols = []string{"wdtt", "qwdtt", "wdtt-plus", "csqtt-2.1.9", "csqtt-2.5.0", "freeturn"}
+var VPNProtocols = []string{"wdtt", "qwdtt", "wdtt-plus", "csqtt-2.1.9", "csqtt-2.5.0", "freeturn", "csqtt-2.5.3-community"}
 
 func ValidateProtocols(protocols []string) error {
+	allowedProtocols := append([]string{}, VPNProtocols...)
+	if raw, err := os.ReadFile("/etc/wdtt/protocols/catalog.json"); err == nil {
+		var entries map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return fmt.Errorf("каталог инбаундов: %w", err)
+		}
+		for name := range entries {
+			allowedProtocols = append(allowedProtocols, name)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	seen := map[string]bool{}
+	if raw, err := os.ReadFile("/etc/wdtt/fleet/inbounds.json"); err == nil {
+		var entries map[string]json.RawMessage
+		if err = json.Unmarshal(raw, &entries); err != nil {
+			return fmt.Errorf("каталог нод: %w", err)
+		}
+		for name := range entries {
+			allowedProtocols = append(allowedProtocols, name)
+		}
+	}
 	for _, name := range protocols {
 		valid := false
-		for _, allowed := range VPNProtocols {
+		for _, allowed := range allowedProtocols {
 			if name == allowed {
 				valid = true
 			}

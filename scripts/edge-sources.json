@@ -1,0 +1,9 @@
+{
+  "dnstt": {"module":"www.bamsoftware.com/git/dnstt.git", "version":"v1.20260501.0", "revision":"0c5c52a57d899c05428c116898941761a2ed83c2", "package":"dnstt-server"},
+  "vaydns": {"repo":"net2share/vaydns", "revision":"a0ff70110d5e96686ab8f4c8e1c44cd09be07a75", "package":"./vaydns-server"},
+  "slipstream": {"repo":"Mygod/slipstream-rust", "revision":"7de506b222c83ae97a19a618e33fe26899af1bd5", "package":"slipstream-server"},
+  "masterdns": {"repo":"masterking32/MasterDnsVPN", "revision":"4052a6b95e758adf2dc26fa1fe527457e58d627c", "package":"./cmd/server"},
+  "cottendns": {"repo":"TaJirax/cottenDNS", "revision":"ac8e86ed83a5006ab320468daaebe759d9574da6", "package":"./cmd/server"},
+  "soar": {"repo":"getlantern/soar", "revision":"fea80aae6c60a9f27d7358e5f967cbc9b57bb37d", "version":"v0.2.4", "package":"adapter"},
+  "openflux": {"repo":"p1neappleXpress/OpenFlux", "revision":"f492a1a33b7581ad8f88118f97e0b866adda3cdc", "package":"."}
+}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,31 @@ const protocolController = "/usr/local/lib/wdtt/protocols.py"
 const protocolInboundsPath = "/etc/wdtt/protocol-inbounds.json"
 
 func (a *App) handleProtocols(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Query().Get("all") == "1" {
+		rows := []map[string]interface{}{}
+		if installationRole() != "panel" {
+			ctx, cancel := context.WithTimeout(r.Context(), 50*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "python3", protocolController)
+			cmd.Stdin = strings.NewReader(`{"op":"list"}`)
+			out, err := cmd.Output()
+			var response struct {
+				Obj []map[string]interface{} `json:"obj"`
+			}
+			if err == nil && json.Unmarshal(out, &response) == nil {
+				rows = response.Obj
+			}
+		}
+		data, _ := os.ReadFile(fleetDirectory + "/inbounds.json")
+		var entries map[string]map[string]interface{}
+		_ = json.Unmarshal(data, &entries)
+		for id, row := range entries {
+			row["id"] = id
+			rows = append(rows, row)
+		}
+		jsonOK(w, rows)
+		return
+	}
 	req := map[string]interface{}{}
 	if r.Method == http.MethodGet {
 		req["op"] = "list"
@@ -38,6 +64,27 @@ func (a *App) handleProtocols(w http.ResponseWriter, r *http.Request) {
 	case "list", "create", "delete", "enable", "disable", "update":
 	default:
 		jsonError(w, "Пользователи управляются через /panel/api/users", 400)
+		return
+	}
+	if nodeID := r.URL.Query().Get("node_id"); nodeID != "" && nodeID != "local" {
+		out, err := runFleet(r.Context(), map[string]interface{}{"op": "protocols", "node_id": nodeID, "request": req})
+		if !json.Valid(out) {
+			jsonError(w, "Нода недоступна", 503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err != nil {
+			w.WriteHeader(400)
+		}
+		_, _ = w.Write(out)
+		return
+	}
+	if installationRole() == "panel" {
+		if op == "list" {
+			jsonOK(w, []interface{}{})
+		} else {
+			jsonError(w, "Сначала выберите ноду", 400)
+		}
 		return
 	}
 	if op == "create" {
@@ -154,6 +201,19 @@ func compileProtocolRouting(raw string) (string, error) {
 		}
 	}
 	if len(vpnTags) > 0 {
+		// Resolve SOCKS destinations before the private-address guard, including names resolving to localhost.
+		routing["domainStrategy"] = "IPOnDemand"
+		policy, _ := cfg["policy"].(map[string]interface{})
+		if policy == nil {
+			policy = map[string]interface{}{}
+			cfg["policy"] = policy
+		}
+		system, _ := policy["system"].(map[string]interface{})
+		if system == nil {
+			system = map[string]interface{}{}
+			policy["system"] = system
+		}
+		system["statsInboundUplink"], system["statsInboundDownlink"] = true, true
 		// Transparent clients must not reach localhost control APIs through a freedom outbound.
 		routing["rules"] = append([]interface{}{map[string]interface{}{
 			"type": "field", "inboundTag": vpnTags, "outboundTag": "wdtt-local-block",
@@ -173,17 +233,55 @@ func compileProtocolRouting(raw string) (string, error) {
 	return string(result), err
 }
 
-func protocolRouteOptions() []struct {
+type protocolRouteOption struct {
 	Tag   string `json:"tag"`
 	Label string `json:"label"`
-} {
-	var options []struct {
-		Tag   string `json:"tag"`
-		Label string `json:"label"`
-	}
+}
+
+func protocolRouteOptions() []protocolRouteOption {
+	options := []protocolRouteOption{}
 	data, err := os.ReadFile("/etc/wdtt/protocols/route-options.json")
 	if err == nil {
 		_ = json.Unmarshal(data, &options)
+	}
+	seen := map[string]bool{}
+	for _, v := range options {
+		seen[v.Tag] = true
+	}
+	if panelDB != nil {
+		rows, err := panelDB.Query("SELECT sub_id,comment FROM wdtt_users WHERE sub_id<>''")
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var id, label string
+				if rows.Scan(&id, &label) == nil {
+					tag := "vpn-user-" + id
+					if !seen[tag] {
+						options = append(options, protocolRouteOption{Tag: tag, Label: label})
+						seen[tag] = true
+					}
+				}
+			}
+		}
+	}
+	if data, err = os.ReadFile(fleetDirectory + "/inbounds.json"); err == nil {
+		var entries map[string]struct {
+			NodeID  string `json:"node_id"`
+			LocalID string `json:"local_id"`
+			Name    string `json:"name"`
+			Present bool   `json:"present"`
+		}
+		if json.Unmarshal(data, &entries) == nil {
+			for _, v := range entries {
+				if v.Present {
+					tag := "vpn-node-" + v.NodeID + "--" + v.LocalID
+					if !seen[tag] {
+						options = append(options, protocolRouteOption{Tag: tag, Label: v.Name})
+						seen[tag] = true
+					}
+				}
+			}
+		}
 	}
 	return options
 }
@@ -196,7 +294,12 @@ func (a *App) handleProtocolRouteOptions(w http.ResponseWriter, r *http.Request)
 	jsonOK(w, protocolRouteOptions())
 }
 
+var protocolRuntimeSignature string
+var protocolXrayMu sync.Mutex
+
 func syncProtocolXray() error {
+	protocolXrayMu.Lock()
+	defer protocolXrayMu.Unlock()
 	generated := protocolInbounds()
 	if generated == nil {
 		return nil
@@ -220,7 +323,8 @@ func syncProtocolXray() error {
 	}
 	oldJSON, _ := json.Marshal(old)
 	newJSON, _ := json.Marshal(generated)
-	if bytes.Equal(oldJSON, newJSON) {
+	signature := string(newJSON)
+	if bytes.Equal(oldJSON, newJSON) && signature == protocolRuntimeSignature {
 		return nil
 	}
 	mergeProtocolInbounds(cfg)
@@ -231,7 +335,11 @@ func syncProtocolXray() error {
 	if err := writeXrayConfig(string(data)); err != nil {
 		return fmt.Errorf("protocol xray: %w", err)
 	}
-	return serviceRestart(xrayServiceUnit)
+	if err := serviceRestart(xrayServiceUnit); err != nil {
+		return err
+	}
+	protocolRuntimeSignature = signature
+	return nil
 }
 
 func resetProtocolUserTraffic(subID string) error {

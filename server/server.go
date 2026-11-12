@@ -616,7 +616,7 @@ func runServerOnce(ctx context.Context, cfg ServerConfig) {
 		log.Fatalf("[DTLS] Сертификат: %v", err)
 	}
 	if serverWrapKeys.Count() == 0 {
-		log.Fatalf("[WRAP] нет активных паролей для WRAP")
+		log.Printf("[WRAP] ожидаем назначения пользователей; подключения пока отклоняются")
 	}
 
 	wrapListener, err := listenWrapped(addr, serverWrapKeys)

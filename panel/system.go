@@ -145,6 +145,9 @@ func wdttHotReload() error {
 }
 
 func wdttHotReloadImpl() error {
+	if installationRole() == "panel" {
+		return nil
+	}
 	if !serviceActive(wdttServiceUnit) {
 		return fmt.Errorf("WDTT не запущен")
 	}

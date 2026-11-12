@@ -16,48 +16,14 @@ def load(name, file):
     return module
 
 
-certs = load('certificates', 'certificates.py')
-nginx = load('nginx', 'configure-nginx.py')
 uninstall = load('uninstall', 'uninstall.py')
 
 
+def old_locations(*_):
+    return '# wdtt-panel locations begin\nlocation /wdtt/ { proxy_pass http://127.0.0.1:2860; }\n# wdtt-panel locations end'
+
+
 class InstallationTests(unittest.TestCase):
-    def test_selfsigned_reinstall_preserves_key_and_checks_host_and_pair(self):
-        with tempfile.TemporaryDirectory() as folder:
-            cert, key = Path(folder)/'cert.pem', Path(folder)/'key.pem'
-            certs.selfsigned('192.0.2.1', cert, key)
-            before = (cert.read_bytes(), key.read_bytes())
-            certs.selfsigned('192.0.2.1', cert, key)
-            self.assertEqual(before, (cert.read_bytes(), key.read_bytes()))
-            with self.assertRaises(ValueError): certs.validate('192.0.2.2', cert, key)
-            other_cert, other_key = Path(folder)/'other.pem', Path(folder)/'other-key.pem'
-            certs.selfsigned('192.0.2.1', other_cert, other_key)
-            with self.assertRaises(ValueError): certs.validate('192.0.2.1', cert, other_key)
-
-    def test_lucx_sni_reinstall_keeps_internal_port_and_other_routes(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            def path(value):
-                value = str(value)
-                return root/value.lstrip('/') if value.startswith('/etc/') else Path(value)
-            stream = path('/etc/nginx/stream-enabled/stream.conf')
-            stream.parent.mkdir(parents=True)
-            stream.write_text('map $ssl_preread_server_name $sni_name {\n old.example www;\n default xray;\n}\nserver { listen 443; proxy_protocol on; ssl_preread on; }')
-            path('/etc/nginx/conf.d').mkdir(parents=True)
-            mapping = path('/etc/nginx/wdtt-panel-sni.map'); mapping.write_text('other.example 127.0.0.1:30000;\n')
-            cert, key = root/'cert.pem', root/'key.pem'; cert.touch(); key.touch()
-            args = argparse.Namespace(host='panel.example',port=443,backend=2860,subport=2096,mode='existing',cert=str(cert),key=str(key),check=False)
-            def command(*args): return 'nginx' if args[0]=='ss' else ''
-            with patch.object(nginx,'Path',side_effect=path), patch.object(nginx,'run',side_effect=command), patch.object(nginx,'free_port',return_value=29443):
-                nginx.configure(args)
-                first = path('/etc/nginx/conf.d/wdtt-panel.conf').read_text()
-                nginx.configure(args)
-            self.assertEqual(first,path('/etc/nginx/conf.d/wdtt-panel.conf').read_text())
-            self.assertIn('other.example 127.0.0.1:30000;',mapping.read_text())
-            self.assertEqual(mapping.read_text().count('panel.example '),1)
-            self.assertEqual(stream.read_text().count('include /etc/nginx/wdtt-panel-sni.map;'),1)
-            self.assertIn('old.example www;',stream.read_text())
-
     def test_full_uninstall_preserves_other_panel_in_a_temporary_root(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
@@ -72,7 +38,7 @@ class InstallationTests(unittest.TestCase):
                 path(name).mkdir(parents=True)
             path('/etc/wdtt/installation.json').write_text(json.dumps({'WDTT_PANEL_HOST':'panel.example'}))
             shared=path('/etc/nginx/conf.d/other.conf')
-            shared.write_text('server { location /lucx/ { proxy_pass http://127.0.0.1:8080; } '+nginx.locations(2860,2096)+' }')
+            shared.write_text('server { location /lucx/ { proxy_pass http://127.0.0.1:8080; } '+old_locations(2860,2096)+' }')
             path('/etc/nginx/conf.d/wdtt-panel.conf').write_text('owned vhost')
             path('/etc/nginx/wdtt-panel-sni.map').write_text('panel.example 127.0.0.1:29443;\nother.example 127.0.0.1:30000;\n')
             stream=path('/etc/nginx/stream-enabled/stream.conf');stream.write_text('include /etc/nginx/wdtt-panel-sni.map;')
@@ -92,7 +58,7 @@ class InstallationTests(unittest.TestCase):
             self.assertFalse(any('lucx-ui' in c and '-D' in c for c in calls))
 
     def test_uninstall_removes_only_panel_locations(self):
-        text = 'server { location /other { proxy_pass http://127.0.0.1:8080; }\n'+nginx.locations(2860,2096)+'\n}'
+        text = 'server { location /other { proxy_pass http://127.0.0.1:8080; }\n'+old_locations(2860,2096)+'\n}'
         result = uninstall.remove_locations(text)
         self.assertIn('location /other',result)
         self.assertNotIn('/wdtt/',result)

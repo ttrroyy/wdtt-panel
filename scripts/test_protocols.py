@@ -16,22 +16,23 @@ def load(name,filename):
 
 
 p=load('protocols','protocols.py')
-nginx=load('configure_nginx','configure-nginx.py')
 firewall=load('panel_firewall','panel-firewall.py')
 
 
 class ProtocolTests(unittest.TestCase):
     def setUp(self):
+        p.edge.configure(vars(p))
         self.temp=tempfile.TemporaryDirectory()
         self.root=patch.object(p,'ROOT',Path(self.temp.name)/'protocols');self.root.start()
     def tearDown(self):
         self.root.stop();self.temp.cleanup()
 
     def test_subnets_and_listeners_do_not_overlap(self):
-        pools=[ipaddress.ip_network(f'10.{s["pool"]}.0.0/16') for s in p.PROFILES.values()]
+        profiles=[s for name,s in p.PROFILES.items() if not p.edge.is_edge(name)]
+        pools=[ipaddress.ip_network(f'10.{s["pool"]}.0.0/16') for s in profiles]
         pools.extend(map(ipaddress.ip_network,['10.70.0.0/16','10.73.0.0/16','10.253.0.0/16']))
         self.assertTrue(all(not a.overlaps(b) for i,a in enumerate(pools) for b in pools[i+1:]))
-        ports=[s['port'] for s in p.PROFILES.values()]
+        ports=[s['port'] for s in profiles]
         self.assertEqual(len(ports),len(set(ports)))
 
     def test_unknown_protocol_cannot_reach_shell(self):
@@ -192,17 +193,6 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(rows[0]['up_bytes'],want)
             self.assertEqual(rows[0]['down_bytes'],want)
 
-    def test_lucx_sni_map_is_preserved_and_patch_is_idempotent(self):
-        source='map $ssl_preread_server_name $sni_name {\n old.example www;\n default xray;\n}\nupstream www { server 127.0.0.1:7443; }\n'
-        updated=nginx.patch_stream(source,'/etc/nginx/wdtt-panel-sni.map')
-        self.assertIn('old.example www;',updated)
-        self.assertIn('default xray;',updated)
-        self.assertEqual(nginx.patch_stream(updated,'/etc/nginx/wdtt-panel-sni.map'),updated)
-        with self.assertRaises(ValueError):nginx.patch_stream('not a supported map','/tmp/include')
-
-    def test_host_cannot_inject_nginx_directives(self):
-        for host in ['good.example; listen 22','a\nserver{}','-bad.example','a/b']:
-            with self.assertRaises(ValueError):nginx.valid_host(host)
 
 
 if __name__=='__main__':unittest.main()

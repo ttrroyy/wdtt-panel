@@ -20,6 +20,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import edge_protocols as edge
+import preflight
 
 ROOT = Path(os.environ.get('WDTT_PROTOCOL_DIR', '/etc/wdtt/protocols'))
 BIN = Path('/usr/local/lib/wdtt/protocols')
@@ -30,7 +32,11 @@ PROFILES = {
     'csqtt-2.1.9': {'name': 'CSQTT 2.1.9', 'port': 56300, 'pool': 69, 'index': 3, 'ifaces': ['csqtt1']},
     'csqtt-2.5.0': {'name': 'CSQTT 2.5.0', 'port': 56400, 'pool': 71, 'index': 4, 'ifaces': ['csqtt1']},
     'freeturn': {'name': 'FreeTurn', 'port': 56500, 'pool': 72, 'index': 5, 'ifaces': ['ftwg0']},
+    'csqtt-2.5.3-community': {'name':'CSQTT 2.5.3 (community)','port':56700,'pool':74,'prefix':24,'max_users':248,'index':6,'ifaces':['csqtt1']},
 }
+
+PROFILES.update(edge.catalog(ROOT))
+edge.configure(globals())
 
 
 def run(*args, check=True, input=None):
@@ -87,7 +93,7 @@ def protocol_config(name,cfg=None):
     port=cfg.get('port',original['port'])
     values=dict(port=port,wg_port=port+1,client_port=9000,listen_host='0.0.0.0',dns='',
                 direct_enabled=True,raw_enabled=True,direct_port=port+2,raw_port=port+3,
-                max_users=65023,max_workers_per_access=0,max_handshakes=32,handshake_rate=24,
+                max_users=original.get('max_users',65023),max_workers_per_access=0,max_handshakes=32,handshake_rate=24,
                 max_client_mbps=0,wg_backend='userspace',fec='safe',secure_cookie=False,
                 mtu=1300 if name=='csqtt-2.1.9' else 1500 if name=='csqtt-2.5.0' else 1280,obf_profile='rtpopus3',obf_timing_ms=0,debug=False)
     values.update(cfg)
@@ -104,6 +110,7 @@ def native_ports():
 
 
 def published_ports(name,cfg=None):
+    if edge.is_edge(name):return edge.published_ports(name)
     if name=='wdtt':return native_ports()
     values=protocol_config(name,cfg)
     ports=[values['port']]
@@ -149,7 +156,7 @@ def settings_sections(name):
     if name in ('qwdtt','wdtt-plus','freeturn'):common.append(number('wg_port','WireGuard порт',p['port']+1,1024,65535))
     if name!='wdtt':common.append(number('client_port','Порт клиента',9000,1024,65535,help='Локальный порт клиента. Обновите его конфигурацию после изменения.'))
     common += [field('dns','DNS клиента',help='Один или два IPv4 через запятую; пусто — DNS сервера.'),
-               field('subnet','Подсеть',default=f'10.{p["pool"]}.0.0/16',readonly=True,help=fixed)]
+               field('subnet','Подсеть',default=f'10.{p["pool"]}.0.0/{p.get("prefix",16)}',readonly=True,help=fixed)]
     sections=[{'title':'Основное','fields':common}]
     if name=='qwdtt':
         common.append(number('mtu','MTU WireGuard',1280,1280,1280,readonly=True,help=original))
@@ -168,7 +175,7 @@ def settings_sections(name):
     if name in ('qwdtt','wdtt-plus','freeturn'):
         advanced.append(number('wg_keepalive','WG keepalive, сек',25,25,25,readonly=True,help=original if name!='freeturn' else fixed))
     if name=='wdtt-plus':advanced.extend([number('handshake_timeout','DTLS handshake, сек',30,30,30,readonly=True,help=original),number('idle_timeout','Тайм-аут DTLS, сек',90,90,90,readonly=True,help=original)])
-    if name.startswith('csqtt'):advanced.append(number('max_users','Лимит пользователей',65023,65023,65023,readonly=True,help=original))
+    if name.startswith('csqtt'):advanced.append(number('max_users','Лимит пользователей',p.get('max_users',65023),p.get('max_users',65023),p.get('max_users',65023),readonly=True,help=original))
     if name in ('qwdtt','csqtt-2.1.9','csqtt-2.5.0'):
         advanced.append(field('admin_addr','Admin HTTPS',default=f'10.253.{p["index"]}.2:{cfg["port"]+(4 if name=="qwdtt" else 2)}',readonly=True,help=fixed))
     sections.append({'title':'Расширенные','fields':advanced})
@@ -285,6 +292,7 @@ def serve(name):
                                      'default_ports':f'{port},{cfg["wg_port"]},{cfg["client_port"]}','public_ip':cfg['host'],'passwords':{},'devices':{}})
     elif name.startswith('csqtt'):
         args=[BIN/name,'--listen',f'{cfg["listen_host"]}:{port}','--web-port',str(port+2),'--config-dir',d]
+        if name=='csqtt-2.5.3-community':args+=['--instance','wdtt-community','--iface','csqtt1','--tun-addr','10.74.0.1/24','--no-nat']
         env.update(CSQTT_MAIN_PASSWORD=cfg['secret'],CSQTT_WEB_USER='admin',CSQTT_WEB_PASS=cfg['admin_token'],
                    CSQTT_PUBLIC_IP=cfg['host'],CSQTT_WEB_SECRET_PATH='')
     elif name=='freeturn':
@@ -434,6 +442,7 @@ def user_id(name, password):
 
 
 def display_users(name):
+    if edge.is_edge(name):return edge.display_users(name)
     rows=users(name)
     with locked():
         saved=state()['users'].get(name,{})
@@ -456,7 +465,7 @@ def display_users(name):
                                                               'hashes':row.get('vk_hash',''),'workers':9,'port':cfg['client_port']})
         elif name=='wdtt-plus':
             row['link']=f'wdtt://{cfg["host"]}:{port}:{cfg["wg_port"]}:{cfg["client_port"]}:{password}:{row.get("vk_hash","")}'
-        elif name=='csqtt-2.5.0':
+        elif name in ('csqtt-2.5.0','csqtt-2.5.3-community'):
             # Use the original server's encrypted URI, including its original hash encoding.
             if not row.get('link','').startswith('csqtt://'): raise ValueError('Сервер CSQTT не вернул ссылку')
         elif name=='csqtt-2.1.9':
@@ -475,6 +484,7 @@ def display_users(name):
 
 
 def create_user(name, data):
+    if edge.is_edge(name):return edge.create_user(name,data)
     p=spec(name); cfg=protocol_config(name) if name!='wdtt' else {}; days=int(data.get('days',0)); total=int(data.get('total_bytes',0)); speed=float(data.get('max_mbps',0))
     if not 0<=days<=365 or total<0 or speed<0 or speed>100000:
         raise ValueError('Некорректный срок, трафик или скорость; 0 означает безлимит')
@@ -515,6 +525,7 @@ def create_user(name, data):
 
 
 def enabled_user(name,password,enabled):
+    if edge.is_edge(name):return edge.enabled_user(name,password,enabled)
     if name=='qwdtt':
         request(name,'/admin/passwords/'+('activate' if enabled else 'deactivate'),{'password':password})
     elif name=='wdtt-plus':
@@ -541,6 +552,7 @@ def sync_freeturn():
 
 
 def mutate_user(name, data, delete=False):
+    if edge.is_edge(name):return edge.mutate_user(name,data,delete)
     password=str(data.get('password',''))
     current=next((r for r in display_users(name) if r['password']==password),None)
     if current is None:
@@ -617,8 +629,10 @@ def profile_list():
                     if name in counts: counts[name]+=1
     rows=[]
     for name,p in PROFILES.items():
+        if edge.is_edge(name):continue
         p=spec(name)
-        row=dict(p,id=name,tag='vpn-'+name,subnet=f'10.{p["pool"]}.0.0/16',present=bool(s['profiles'].get(name)))
+        row=dict(p,id=name,tag='vpn-'+name,subnet=f'10.{p["pool"]}.0.0/{p.get("prefix",16)}',present=bool(s['profiles'].get(name)))
+        row['installed']=name=='wdtt' or (BIN/name).is_file()
         if name!='wdtt' and (directory(name)/'settings.json').exists():
             cfg=settings(name)
             row.update(name=cfg.get('remark') or p['name'],host=cfg['host'],dns=cfg.get('dns',''))
@@ -644,10 +658,11 @@ def profile_list():
         row['active']=run('systemctl','is-active','wdtt.service' if name=='wdtt' else unit(name),check=False)=='active'
         if name!='wdtt' and (directory(name)/'settings.json').exists():row['settings_sections']=settings_sections(name)
         rows.append(row)
-    return rows
+    return rows+edge.profile_rows()
 
 
 def profile_create(name,host):
+    if edge.is_edge(name):return edge.toggle(name,True)
     spec(name)
     with locked():
         s=state()
@@ -658,6 +673,9 @@ def profile_create(name,host):
     try:
         if name!='wdtt':
             validate_profile_ports(name,protocol_config(name,settings(name) if (directory(name)/'settings.json').exists() else {}))
+            pools=[f'10.{pool}.0.0/'+('24' if name=='csqtt-2.5.3-community' else '16') for pool in preflight.POOLS.get(name,[])]
+            overlaps=preflight.route_conflicts(json.loads(run('ip','-j','-4','route','show','table','all')),pools)
+            if overlaps:raise ValueError('; '.join(overlaps))
             if not (BIN/name).exists():
                 raise ValueError('Серверный бинарник не установлен')
             setup(name,host)
@@ -671,6 +689,7 @@ def profile_create(name,host):
 
 
 def profile_delete(name):
+    if edge.is_edge(name):return edge.toggle(name,False,False)
     spec(name)
     if name!='wdtt':
         run('systemctl','disable','--now',unit(name))
@@ -679,6 +698,7 @@ def profile_delete(name):
 
 
 def profile_toggle(name, enabled):
+    if edge.is_edge(name):return edge.toggle(name,enabled)
     spec(name)
     with locked():
         s=state()
@@ -795,11 +815,35 @@ def adopt_legacy_users(rows_by_profile):
                 save(s)
 
 
+def remote_traffic():
+    root=ROOT.parent/'fleet';snapshot=root/'snapshots.json'
+    if not snapshot.exists():return {}
+    nodes={n['id'] for n in json.loads((root/'state.json').read_text()).get('nodes',[])}
+    totals={}
+    for node,values in json.loads(snapshot.read_text()).items():
+        if node not in nodes:continue
+        for sub,bundle in values.get('subscriptions',{}).items():
+            row=totals.setdefault(sub,dict(up_bytes=0,down_bytes=0))
+            for key in row:row[key]+=int(bundle.get(key,0))
+        for user in values.get('users',{}).get('rows',[]):
+            row=totals.setdefault(user['sub_id'],dict(up_bytes=0,down_bytes=0))
+            for key in row:row[key]+=int(user.get(key,0))
+    return totals
+
+
+def save_bundle(sub_id,bundle):
+    with locked():
+        current=state();previous=current.setdefault('bundles',{}).get(sub_id,{})
+        if previous.get('reset_rev',0)>bundle.get('reset_rev',0):
+            for field in ('reset_rev','traffic_offsets','remote_traffic_offsets'):bundle[field]=previous.get(field,{})
+        current['bundles'][sub_id]=bundle;save(current)
+
+
 def sync_subscription_bundles(rows_by_profile):
     with locked():
         current=state();bundles=dict(current.get('bundles',{}))
         active_profiles={name:present and not current.get('disabled',{}).get(name,False) for name,present in current['profiles'].items()}
-    result={};aliases={};options=[];errors=[]
+    result={};aliases={};options=[];errors=[];remote=remote_traffic()
     native={master['sub_id']:master for master in native_users() if master['sub_id']}
     # Deleted identities lose all backend access, even when their old credentials remain on disk.
     for sub_id,bundle in list(bundles.items()):
@@ -811,6 +855,9 @@ def sync_subscription_bundles(rows_by_profile):
         bundle=bundles.setdefault(sub_id,{'members':{}})
         bundle['wdtt_password']=master['password']
         selected=selected_protocols(master,bundle)
+        remote_catalog=ROOT.parent/'fleet/inbounds.json'
+        remote_ids=json.loads(remote_catalog.read_text()) if remote_catalog.exists() else {}
+        selected=[name for name in selected if name not in remote_ids]
         if any(name not in PROFILES for name in selected): raise ValueError('Неизвестный инбаунд подписки')
         connections=[];up=down=0;tags=[]
         if 'wdtt' in selected: tags.append('vpn-wdtt-user-'+user_id('wdtt',master['password']))
@@ -825,8 +872,7 @@ def sync_subscription_bundles(rows_by_profile):
                     created=create_user(name,{'name':master['comment'] or 'Пользователь','vk_hash':master['vk_hash'],'days':0,'max_devices':master['max_devices'] or 1})
                     password=created['password'];bundle['members'][name]=password
                     # Save immediately: a failed following backend must not duplicate this credential.
-                    with locked():
-                        state_now=state();state_now.setdefault('bundles',{})[sub_id]=bundle;save(state_now)
+                    save_bundle(sub_id,bundle)
                     row=next(x for x in display_users(name) if x['password']==password)
                     rows_by_profile.setdefault(name,[]).append(row)
                 if row is None: continue
@@ -847,7 +893,9 @@ def sync_subscription_bundles(rows_by_profile):
         raw_up,raw_down=up,down
         offsets=bundle.get('traffic_offsets',{})
         up=max(0,up-offsets.get('up_bytes',0));down=max(0,down-offsets.get('down_bytes',0))
-        used=up+down+master['up_bytes']+master['down_bytes']
+        remote_offsets=bundle.get('remote_traffic_offsets',{})
+        remote_used=sum(max(0,remote.get(sub_id,{}).get(key,0)-remote_offsets.get(key,0)) for key in ('up_bytes','down_bytes'))
+        used=up+down+master['up_bytes']+master['down_bytes']+remote_used
         if master['total_bytes'] and used>=master['total_bytes']:
             # Native suspension also triggers its normal live peer revocation.
             with sqlite3.connect(ROOT.parent/'panel.db',timeout=5) as db:
@@ -856,11 +904,10 @@ def sync_subscription_bundles(rows_by_profile):
             for name,password in bundle['members'].items():
                 if active_profiles.get(name): enabled_user(name,password,False)
             connections=[]
-        with locked():
-            state_now=state();state_now.setdefault('bundles',{})[sub_id]=bundle;save(state_now)
+        save_bundle(sub_id,bundle)
         tag='vpn-user-'+sub_id;aliases[tag]=tags
         options.append({'tag':tag,'label':master['comment'] or 'Пользователь'})
-        result[sub_id]={'connections':connections,'up_bytes':up,'down_bytes':down,'raw_up_bytes':raw_up,'raw_down_bytes':raw_down}
+        result[sub_id]={'connections':connections,'up_bytes':up,'down_bytes':down,'raw_up_bytes':raw_up,'raw_down_bytes':raw_down,'remote_up_offset':remote_offsets.get('up_bytes',0),'remote_down_offset':remote_offsets.get('down_bytes',0)}
     atomic(ROOT.parent/'protocol-subscriptions.json',result)
     atomic(ROOT/'user-route-aliases.json',aliases)
     return options,errors
@@ -886,6 +933,7 @@ def routing_snapshot(rows_by_profile):
     with locked():
         s=state()
         for name,rows in rows_by_profile.items():
+            if edge.is_edge(name):continue
             p=spec(name); port=21000+p['index']; tag='vpn-'+name
             generated.append(transparent_inbound(tag,port))
             iface=f'wp{p["index"]}h' if name!='wdtt' else 'wdtt0'
@@ -906,6 +954,7 @@ def routing_snapshot(rows_by_profile):
             for tag,children in json.loads(aliases.read_text()).items():
                 if tag in wanted: wanted.update(children)
         for name,rows in rows_by_profile.items():
+            if edge.is_edge(name):continue
             for row in rows:
                 if row['tag'] not in wanted: continue
                 key=row['password']; entry=s['users'].setdefault(name,{}).setdefault(key,{})
@@ -918,7 +967,8 @@ def routing_snapshot(rows_by_profile):
                     target_iface='wdtt-raw' if name=='wdtt' and address.startswith('10.70.') else iface
                     ingress.insert(0,(target_iface,address,port))
         save(s)
-    return generated,ingress
+    extra,extra_ingress=edge.routing(rows_by_profile)
+    return generated+extra,ingress+extra_ingress
 
 
 def apply_routes(ingress):
@@ -930,6 +980,7 @@ def apply_routes(ingress):
     run('sysctl','-qw','net.ipv4.conf.all.rp_filter=0')
     ipt('filter','INPUT','-m','mark','--mark','0x77/0xff','-j','ACCEPT')
     lines=['*mangle',':WDTT_PANEL - [0:0]','-F WDTT_PANEL']
+    lines.extend(edge.bypass_rules())
     for iface,address,port in ingress:
         for proto in ('tcp','udp'):
             parts=['-A','WDTT_PANEL','-i',iface,'-p',proto]
@@ -941,6 +992,7 @@ def apply_routes(ingress):
 
 
 def bandwidth(name, rows):
+    if edge.is_edge(name):return
     if name=='wdtt': return
     # Configure only changed limits; zero removes filters instead of throttling traffic.
     signature=hashlib.sha256(json.dumps([(r['password'],r.get('ips',[]),r.get('max_mbps',0)) for r in rows],sort_keys=True).encode()).hexdigest()
@@ -966,6 +1018,9 @@ def bandwidth(name, rows):
 
 
 def reconcile():
+    PROFILES.update(edge.catalog(ROOT))
+    try:edge.counters()
+    except Exception as error:print('edge stats: '+str(error),file=sys.stderr,flush=True)
     rows_by_profile={}; errors=[]
     with locked():
         current=state();enabled=dict(current['profiles']);disabled=dict(current.get('disabled',{}))
@@ -978,7 +1033,10 @@ def reconcile():
         try:
             rows=display_users(name); rows_by_profile[name]=rows
             atomic(directory(name)/'last-users.json', rows)
-            if name!='wdtt':
+            if edge.is_edge(name):
+                for row in rows:
+                    if row['enabled'] and run('systemctl','is-active',edge.service(name,row['password']),check=False)!='active':errors.append(name+': сервер пользователя не запущен')
+            if name!='wdtt' and not edge.is_edge(name):
                 pools=[f'10.{spec(name)["pool"]}.0.0/16']+(['10.73.0.0/16'] if name=='qwdtt' else [])
                 # Upstreams insert their NAT rule during startup; keep the identity exemption first.
                 nat=nsrun(name,'iptables','-t','nat','-S','POSTROUTING')
@@ -1029,11 +1087,15 @@ def api(data):
             totals=json.loads(snapshot.read_text()).get(sub_id,{}) if snapshot.exists() else {}
             offsets=bundle.setdefault('traffic_offsets',{})
             for key in ('up_bytes','down_bytes'):offsets[key]=totals.get('raw_'+key,totals.get(key,0))
+            bundle['remote_traffic_offsets']=remote_traffic().get(sub_id,dict(up_bytes=0,down_bytes=0))
+            bundle['reset_rev']=bundle.get('reset_rev',0)+1
             save(s)
         return {}
+    if operation=='create' and data.get('engine') in edge.TYPES:return edge.create(data)
     spec(name)
+    if operation=='update' and edge.is_edge(name):return edge.update(name,data)
     if operation=='update': return profile_update(name,data)
-    if operation=='create': profile_create(name,str(data.get('host','')))
+    if operation=='create': return profile_create(name,str(data.get('host',''))) or {}
     elif operation=='delete': profile_delete(name)
     elif operation in ('enable','disable'): profile_toggle(name,operation=='enable')
     elif operation=='users': return display_users(name)
@@ -1048,6 +1110,8 @@ if __name__=='__main__':
     try:
         if len(sys.argv)>1 and sys.argv[1]=='run':
             sys.exit(serve(sys.argv[2]))
+        elif len(sys.argv)>1 and sys.argv[1]=='edge-run':
+            edge.serve(sys.argv[2])
         elif len(sys.argv)>1 and sys.argv[1]=='watch':
             (ROOT/'routing.signature').unlink(missing_ok=True)
             while True:

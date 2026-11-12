@@ -29,6 +29,7 @@ func initAssetsVer() {
 	var buf []byte
 	for _, path := range []string{
 		"web/assets/css/custom.min.css",
+		"web/assets/css/rawline.css",
 		"web/assets/js/panel-core.min.js",
 		"web/assets/js/wdtt-share.js",
 	} {

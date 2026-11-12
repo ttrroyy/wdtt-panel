@@ -14,30 +14,30 @@ import (
 )
 
 type panelSettingsReq struct {
-	WebListen     string `json:"webListen"`
-	WebDomain     string `json:"webDomain"`
-	WebPort       int    `json:"webPort"`
-	WebBasePath   string `json:"webBasePath"`
-	SessionMaxAge int    `json:"sessionMaxAge"`
-	PageSize      int    `json:"pageSize"`
-	RemarkModel   string `json:"remarkModel"`
-	WebCertFile   string `json:"webCertFile"`
-	WebKeyFile    string `json:"webKeyFile"`
-	BlockPing     bool   `json:"blockPing"`
-	SubEnable     bool   `json:"subEnable"`
-	SubListen     string `json:"subListen"`
-	SubPort       int    `json:"subPort"`
-	SubPath       string `json:"subPath"`
-	SubDomain     string `json:"subDomain"`
-	SubCertFile   string `json:"subCertFile"`
-	SubKeyFile    string `json:"subKeyFile"`
-	SubEncrypt    bool   `json:"subEncrypt"`
-	SubTitle      string `json:"subTitle"`
-	SubSupportURL string `json:"subSupportUrl"`
-	SubProfileURL string `json:"subProfileUrl"`
-	SubAnnounce   string `json:"subAnnounce"`
-	SubURI        string `json:"subURI"`
-	SubShowInfo   bool   `json:"subShowInfo"`
+	WebListen          string `json:"webListen"`
+	WebDomain          string `json:"webDomain"`
+	WebPort            int    `json:"webPort"`
+	WebBasePath        string `json:"webBasePath"`
+	SessionMaxAge      int    `json:"sessionMaxAge"`
+	PageSize           int    `json:"pageSize"`
+	RemarkModel        string `json:"remarkModel"`
+	WebCertFile        string `json:"webCertFile"`
+	WebKeyFile         string `json:"webKeyFile"`
+	BlockPing          bool   `json:"blockPing"`
+	SubEnable          bool   `json:"subEnable"`
+	SubListen          string `json:"subListen"`
+	SubPort            int    `json:"subPort"`
+	SubPath            string `json:"subPath"`
+	SubDomain          string `json:"subDomain"`
+	SubCertFile        string `json:"subCertFile"`
+	SubKeyFile         string `json:"subKeyFile"`
+	SubEncrypt         bool   `json:"subEncrypt"`
+	SubTitle           string `json:"subTitle"`
+	SubSupportURL      string `json:"subSupportUrl"`
+	SubProfileURL      string `json:"subProfileUrl"`
+	SubAnnounce        string `json:"subAnnounce"`
+	SubURI             string `json:"subURI"`
+	SubShowInfo        bool   `json:"subShowInfo"`
 	DashboardPollSec   int    `json:"dashboardPollSec"`
 	UsersPollSec       int    `json:"usersPollSec"`
 	ConnectionsPollSec int    `json:"connectionsPollSec"`
@@ -175,7 +175,7 @@ func (a *App) handleSettingUpdate(w http.ResponseWriter, r *http.Request) {
 		req.PageSize = 0
 	}
 
-	a.cfg.WebListen = strings.TrimSpace(req.WebListen)
+	a.cfg.WebListen = "127.0.0.1"
 	a.cfg.WebDomain = strings.TrimSpace(req.WebDomain)
 	a.cfg.Port = req.WebPort
 	if req.WebBasePath != "" {
@@ -190,9 +190,12 @@ func (a *App) handleSettingUpdate(w http.ResponseWriter, r *http.Request) {
 	a.cfg.WebKeyFile = strings.TrimSpace(req.WebKeyFile)
 	a.cfg.BlockPing = req.BlockPing
 	a.cfg.SubEnable = req.SubEnable
-	a.cfg.SubListen = strings.TrimSpace(req.SubListen)
-	a.cfg.SubPort = req.SubPort
-	a.cfg.SubPath = normalizeSubPath(req.SubPath)
+	a.cfg.SubListen = "127.0.0.1"
+	a.cfg.SubPort = a.cfg.Port
+	if err := ensureInstallationPaths(a.cfg); err != nil {
+		jsonError(w, err.Error(), 500)
+		return
+	}
 	a.cfg.SubDomain = strings.TrimSpace(req.SubDomain)
 	a.cfg.SubCertFile = strings.TrimSpace(req.SubCertFile)
 	a.cfg.SubKeyFile = strings.TrimSpace(req.SubKeyFile)
@@ -201,7 +204,7 @@ func (a *App) handleSettingUpdate(w http.ResponseWriter, r *http.Request) {
 	a.cfg.SubSupportURL = strings.TrimSpace(req.SubSupportURL)
 	a.cfg.SubProfileURL = strings.TrimSpace(req.SubProfileURL)
 	a.cfg.SubAnnounce = strings.TrimSpace(req.SubAnnounce)
-	a.cfg.SubURI = strings.TrimSpace(req.SubURI)
+	a.cfg.SubURI = ""
 	a.cfg.SubShowInfo = req.SubShowInfo
 	a.cfg.DashboardPollSec = clampDashboardPollSec(req.DashboardPollSec)
 	a.cfg.UsersPollSec = clampPagePollSec(req.UsersPollSec)

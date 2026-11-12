@@ -1,12 +1,13 @@
 {{define "component/protocolManager"}}
 <script type="text/x-template" id="protocol-manager-template">
- <a-card title="VPN-подключения" hoverable style="margin-bottom:16px">
+ <a-card title="Инбаунды" hoverable style="margin-bottom:16px">
   <template slot="extra"><a-button icon="sync" :loading="busy" @click="load" aria-label="Обновить подключения"></a-button></template>
   <a-alert v-if="error" type="error" show-icon :message="error" style="margin-bottom:12px"></a-alert>
+  <a-select v-if="nodes.length" :value="nodeID" @change="selectNode" aria-label="Нода" style="width:240px;max-width:100%;margin:0 12px 12px 0" :dropdown-class-name="themeSwitcher.currentTheme"><a-select-option v-for="node in nodes" :key="node.id">[[ node.name ]]</a-select-option></a-select>
   <a-dropdown :trigger="['click']" :disabled="!profiles.some(p=>!p.present)" style="margin-bottom:12px">
-   <a-button type="primary" icon="plus" :disabled="busy || !profiles.some(p=>!p.present)">Создать подключение</a-button>
-   <a-menu slot="overlay" @click="({key})=>change(profiles.find(p=>p.id===key),'create')">
-    <a-menu-item v-for="row in profiles.filter(p=>!p.present)" :key="row.id">[[ row.name ]]</a-menu-item>
+   <a-button type="primary" icon="plus" :disabled="busy || !profiles.some(p=>!p.present)">Добавить инбаунд</a-button>
+   <a-menu slot="overlay" @click="({key})=>addProfile(profiles.find(p=>p.id===key))">
+    <a-menu-item v-for="row in profiles.filter(p=>!p.present)" :key="row.id" :disabled="row.installed===false">[[ row.name ]]<span v-if="row.installed===false"> — ядро отсутствует</span></a-menu-item>
    </a-menu>
   </a-dropdown>
   <a-table :columns="columns" :data-source="profiles.filter(p=>p.present)" row-key="id" :pagination="false" :scroll="{x:1084}" bordered size="middle">
@@ -41,6 +42,17 @@
       </template>
     </a-form>
   </a-modal>
+  <a-modal :class="themeSwitcher.currentTheme" v-model="creating" :title="'Добавить инбаунд — '+(creation && creation.name || '')" :confirm-loading="busy" @ok="createProfile" ok-text="Добавить" cancel-text="Закрыть">
+    <a-form layout="vertical">
+      <a-form-item label="Примечание"><a-input v-model.trim="createForm.remark" :max-length="128"></a-input></a-form-item>
+      <template v-if="creation && creation.engine!=='openflux'">
+        <a-form-item label="Делегированная DNS-зона"><a-input v-model.trim="createForm.zone" placeholder="t.example.org"></a-input></a-form-item>
+        <a-form-item label="NS-имя сервера"><a-input v-model.trim="createForm.ns" placeholder="ns.example.org"></a-input></a-form-item>
+        <a-alert type="info" show-icon message="A-запись NS-имени должна указывать на VPS без CDN. NS-запись зоны — на это имя. Все DNS-инбаунды используют общий порт 53 и отдельные поддомены пользователей."></a-alert>
+      </template>
+      <a-alert v-else type="info" show-icon message="Оригинальный OpenFlux Direct. Для каждого пользователя создаётся отдельная защищённая сессия и свободный TCP-порт."></a-alert>
+    </a-form>
+  </a-modal>
  </a-card>
 </script>
 <style>
@@ -50,21 +62,24 @@
 Vue.component('protocol-manager', {
  template:'#protocol-manager-template', delimiters:['[[',']]'],
  data(){return {
-  themeSwitcher,profiles:[],busy:false,error:'',editing:false,selected:null,form:{},
+  themeSwitcher,profiles:[],nodes:[],nodeID:new URLSearchParams(location.search).get('node')||'local',busy:false,error:'',editing:false,selected:null,form:{},creating:false,creation:null,createForm:{},
   columns:[{title:'ID',dataIndex:'display_id',width:48,align:'center'},{title:'Меню',scopedSlots:{customRender:'operate'},width:60,align:'center'},{title:'Включить',scopedSlots:{customRender:'enable'},width:86,align:'center'},{title:'Примечание',dataIndex:'name',width:150},{title:'Порт',scopedSlots:{customRender:'ports'},width:160,align:'center'},{title:'Протокол',scopedSlots:{customRender:'protocol'},width:200,align:'center'},{title:'Подсеть',scopedSlots:{customRender:'subnet'},width:145,align:'center'},{title:'Пользователи',scopedSlots:{customRender:'users'},width:105,align:'center'},{title:'Трафик',scopedSlots:{customRender:'total'},width:130,align:'center'}],
 
  }},
  methods:{
-  async call(data){const result=await panelApiJson('panel/api/protocols',{method:'POST',body:JSON.stringify(data)});return result.obj;},
+  async call(data){const result=await panelApiJson('panel/api/protocols?node_id='+encodeURIComponent(this.nodeID),{method:'POST',body:JSON.stringify(data)});return result.obj;},
   async perform(fn){this.busy=true;this.error='';try{await fn();}catch(e){this.error=e.response?.data?.msg||e.message||'Ошибка запроса';this.$message.error(this.error);}finally{this.busy=false;}},
-  async load(){await this.perform(async()=>{const result=await HttpUtil.get('/panel/api/protocols');if(!result.success)throw new Error(result.msg);this.profiles=result.obj;});},
+  async load(){await this.perform(async()=>{const result=await panelApiJson('panel/api/protocols?node_id='+encodeURIComponent(this.nodeID));this.profiles=result.obj;});},
+  async selectNode(id){this.nodeID=id;activeNodeID=id;history.replaceState(null,'',basePath+'panel/connections?node='+encodeURIComponent(id));await this.load();},
   async change(row,op){await this.perform(async()=>{await this.call({op,protocol:row.id});});await this.load();},
+  addProfile(row){if(!row.template){this.change(row,'create');return;}const dns=this.profiles.find(p=>p.present && p.engine && p.engine!=='openflux');const fields=dns?.settings_sections?.flatMap(s=>s.fields)||[];this.creation=row;this.createForm={remark:row.name,zone:fields.find(f=>f.key==='zone')?.value||'',ns:fields.find(f=>f.key==='ns')?.value||''};this.creating=true;},
+  async createProfile(){await this.perform(async()=>{await this.call({...this.createForm,op:'create',engine:this.creation.engine});this.creating=false;});await this.load();},
   deleteProfile(row){this.$confirm({title:'Удалить '+row.name+'?',content:'Настройки и пользователи сохранятся для повторного создания.',okText:'Удалить',cancelText:'Отмена',okType:'danger',onOk:()=>this.change(row,'delete')});},
   edit(row){if(row.id==='wdtt'){this.$emit('edit-wdtt');return;}this.selected=row;const form={};for(const section of row.settings_sections || [])for(const field of section.fields)if(!field.readonly)form[field.key]=field.key==='enabled'?row.enabled:field.value;this.form=form;this.editing=true;},
   async saveSettings(){await this.perform(async()=>{await this.call({...this.form,op:'update',protocol:this.selected.id});this.editing=false;});await this.load();},
   select(){location.href=basePath+'panel/users';},
-  bytes(value){if(!value)return '0 Б';const n=Math.min(4,Math.floor(Math.log(value)/Math.log(1024)));return (value/1024**n).toFixed(n?2:0)+' '+['Б','КиБ','МиБ','ГиБ','ТиБ'][n];}
- },mounted(){this.load();}
+  bytes(value){if(!value)return '0 Б';const n=Math.min(4,Math.floor(Math.log(value)/Math.log(1024)));return (value/1024**n).toFixed(n?2:0)+' '+['Б','КиБ','МиБ','ГиБ','ТиБ'][n];},
+ },async mounted(){try{const data=await fleetRequest('nodes');this.nodes=data.nodes.filter(n=>n.status==='ready');if(!this.nodes.some(n=>n.id===this.nodeID)&&this.nodes.length)this.nodeID=this.nodes[0].id;activeNodeID=this.nodeID;}catch(e){this.error=e.message}this.load();}
 });
 </script>
 {{end}}

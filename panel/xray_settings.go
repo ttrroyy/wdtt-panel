@@ -230,8 +230,13 @@ func writeXrayConfig(raw string) error {
 }
 
 func saveXrayConfig(raw string) error {
+	protocolXrayMu.Lock()
+	defer protocolXrayMu.Unlock()
 	if err := writeXrayConfig(raw); err != nil {
 		return err
+	}
+	if installationRole() == "panel" {
+		return nil
 	}
 	return serviceRestart(xrayServiceUnit)
 }

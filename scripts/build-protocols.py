@@ -98,6 +98,23 @@ def patch(root, name, pool):
 
 def build(name, destination, cache):
     spec = SOURCES[name]
+    if spec.get('release'):
+        destination.mkdir(parents=True,exist_ok=True)
+        artifact=spec['artifacts'][platform.machine()]
+        binary=destination/name
+        if not binary.exists() or hashlib.sha256(binary.read_bytes()).hexdigest()!=artifact['sha256']:
+            fd,filename=tempfile.mkstemp(prefix=name+'.',dir=destination);os.close(fd)
+            staged=Path(filename)
+            try:
+                urllib.request.urlretrieve(f'https://github.com/{spec["repo"]}/releases/download/{spec["release"]}/{artifact["file"]}',staged)
+                if hashlib.sha256(staged.read_bytes()).hexdigest()!=artifact['sha256']:raise ValueError('CSQTT community: SHA-256 не совпадает с оригинальным релизом')
+                staged.chmod(0o755);os.replace(staged,binary)
+            finally:staged.unlink(missing_ok=True)
+        license_dir=destination/'licenses'/name;license_dir.mkdir(parents=True,exist_ok=True)
+        for filename in ('LICENSE','README.md'):
+            urllib.request.urlretrieve(f'https://raw.githubusercontent.com/{spec["repo"]}/{spec["revision"]}/{filename}',license_dir/filename)
+        (license_dir/'source.json').write_text(json.dumps(spec,indent=2))
+        return
     patch_id = hashlib.sha256((spec['revision']+inspect.getsource(patch)).encode()).hexdigest()[:12]
     root = cache / (name+'-'+patch_id)
     if not root.exists():

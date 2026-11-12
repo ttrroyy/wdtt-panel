@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -105,6 +106,20 @@ func (a *App) subPublicEndpoint() (scheme, hostWithPort string) {
 		scheme = "https"
 	}
 	host := strings.TrimSpace(a.cfg.SubDomain)
+	if data, err := os.ReadFile("/etc/wdtt/frontend.json"); err == nil {
+		var frontend struct {
+			Mode   string `json:"mode"`
+			Domain string `json:"domain"`
+		}
+		if json.Unmarshal(data, &frontend) == nil {
+			if frontend.Mode == "nginx" || frontend.Mode == "caddy" {
+				return "https", frontend.Domain
+			}
+			if frontend.Mode == "local" {
+				return "http", net.JoinHostPort("127.0.0.1", fmt.Sprint(a.cfg.SubPort))
+			}
+		}
+	}
 	if host == "" {
 		host = strings.TrimSpace(a.cfg.WebDomain)
 	}
@@ -127,14 +142,7 @@ func subListenAddr(cfg *PanelConfig) string {
 	if port <= 0 {
 		port = 2096
 	}
-	listen := strings.TrimSpace(cfg.SubListen)
-	if _, err := os.Stat("/etc/wdtt/nginx-managed"); err == nil {
-		listen = "127.0.0.1"
-	}
-	if listen == "" {
-		return fmt.Sprintf(":%d", port)
-	}
-	return net.JoinHostPort(listen, fmt.Sprintf("%d", port))
+	return net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", port))
 }
 
 func subscriptionWantsHTML(r *http.Request) bool {
@@ -189,7 +197,7 @@ func (a *App) restartSubscriptionServer() {
 
 func (a *App) startSubscriptionServer() {
 	a.subMu.Lock()
-	if a.cfg == nil || !a.cfg.SubEnable {
+	if a.cfg == nil || !a.cfg.SubEnable || a.cfg.SubPort == a.cfg.Port {
 		a.subMu.Unlock()
 		return
 	}
@@ -411,7 +419,7 @@ func (a *App) serveSubInfoPage(w http.ResponseWriter, r *http.Request, subID str
 		"linkTitles":   linkTitles,
 	}
 	if _, err := os.Stat("/etc/wdtt/nginx-managed"); err == nil {
-		data["base_path"] = a.cfg.basePath()
+		data["base_path"] = normalizeSubPath(a.cfg.SubPath)
 	}
 	if bundle, ok := loadProtocolSubscription(subID); ok {
 		var configs []string

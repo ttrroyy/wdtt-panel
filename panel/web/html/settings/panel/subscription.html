@@ -12,21 +12,21 @@
       <template #title>{{ i18n "pages.settings.subListen"}}</template>
       <template #description>{{ i18n "pages.settings.subListenDesc"}}</template>
       <template #control>
-        <a-input type="text" v-model="allSetting.subListen" placeholder="0.0.0.0"></a-input>
+        <a-input type="text" value="127.0.0.1" disabled></a-input>
       </template>
     </a-setting-list-item>
     <a-setting-list-item paddings="small">
       <template #title>{{ i18n "pages.settings.subPort"}}</template>
       <template #description>{{ i18n "pages.settings.subPortDesc"}}</template>
       <template #control>
-        <a-input-number :min="1" :max="65535" v-model="allSetting.subPort" :style="{ width: '100%' }"></a-input-number>
+        <a-input-number :min="1" :max="65535" :value="allSetting.webPort" disabled :style="{ width: '100%' }"></a-input-number>
       </template>
     </a-setting-list-item>
     <a-setting-list-item paddings="small">
       <template #title>{{ i18n "pages.settings.subPath"}}</template>
       <template #description>{{ i18n "pages.settings.subPathDesc"}}</template>
       <template #control>
-        <a-input type="text" v-model="allSetting.subPath" placeholder="/sub/"
+        <a-input type="text" :value="allSetting.subPath" disabled
           @blur="allSetting.subPath = normalizeSubPath(allSetting.subPath)"></a-input>
       </template>
     </a-setting-list-item>

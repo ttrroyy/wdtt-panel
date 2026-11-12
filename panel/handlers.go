@@ -326,6 +326,12 @@ func (a *App) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, err.Error(), 400)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
 	var req struct {
 		OldPassword string `json:"old_password"`
 		userAPIReq
@@ -341,13 +347,24 @@ func (a *App) handleUserUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	manageDevices := req.DeviceIDs != nil || strings.TrimSpace(req.DeviceID) != ""
+	fields := map[string]json.RawMessage{}
+	membershipOnly := req.Inbounds != nil && json.Unmarshal(body, &fields) == nil
+	for key := range fields {
+		if key != "old_password" && key != "inbounds" && key != "main_vk_hash" {
+			membershipOnly = false
+		}
+	}
 	db, err := loadPasswords()
 	if err != nil {
 		jsonError(w, err.Error(), 500)
 		return
 	}
-	if req.OldPassword == db.MainPassword && req.Inbounds != nil && !manageDevices {
+	if (req.OldPassword == db.MainPassword && req.Inbounds != nil && !manageDevices) || membershipOnly {
 		if req.MainVkHash != nil {
+			if req.OldPassword != db.MainPassword {
+				jsonError(w, "main_vk_hash допустим только для главного пользователя", 400)
+				return
+			}
 			if _, err := panelDB.Exec(`UPDATE wdtt_users SET vk_hash=? WHERE password=?`, vkhash.Normalize(*req.MainVkHash), req.OldPassword); err != nil {
 				jsonError(w, err.Error(), 500)
 				return

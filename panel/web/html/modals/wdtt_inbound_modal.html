@@ -23,7 +23,7 @@
     </a-form-item>
     <a-form-item>
       <template slot="label">
-        <a-tooltip title="Домен или IP в wdtt:// ссылках (DTLS, не HTTPS). Пусто = домен из SSL-сертификата панели, иначе публичный IP">
+        <a-tooltip title="Адрес VPS или домен для клиентских конфигов. Пусто — публичный IP ноды.">
           Адрес в ссылке <a-icon type="question-circle"></a-icon>
         </a-tooltip>
       </template>
@@ -202,7 +202,7 @@
               headers['X-CSRF-Token'] = csrf;
             }
           }
-          const res = await fetch(basePath + 'panel/api/inbound/save', {
+          const res = await fetch(basePath + 'panel/api/inbound/save?node_id='+encodeURIComponent(typeof activeNodeID==='string'?activeNodeID:'local'), {
             method: 'POST',
             credentials: 'same-origin',
             headers,

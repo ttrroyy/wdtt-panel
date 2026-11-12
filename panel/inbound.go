@@ -478,7 +478,7 @@ Type=simple
 SyslogIdentifier=wdtt
 ExecStartPre=-/usr/bin/env bash -c "ip link show wdtt0 >/dev/null 2>&1 && ip link del wdtt0 2>/dev/null || true"
 %s
-ExecStart=%s -config-dir %s
+ExecStart=%s%s -config-dir %s
 ExecStartPost=/usr/bin/env bash -c 'for i in $(seq 1 60); do ip addr show wdtt0 2>/dev/null | grep -q "10.66.66.1" && /usr/local/bin/wdtt-mtu-rules.sh up && exit 0; sleep 0.5; done; /usr/local/bin/wdtt-mtu-rules.sh up'
 ExecStopPost=-/usr/local/bin/wdtt-mtu-rules.sh down
 Restart=always
@@ -487,8 +487,18 @@ LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
-`, iptPre, wdttServerBin, wdttConfigDir)
+`, iptPre, wdttServerBin, wdttRoleArgs(installationRole()), wdttConfigDir)
 	return os.WriteFile(wdttServicePath, []byte(content), 0644)
+}
+
+func wdttRoleArgs(role string) string {
+	if role == "node" {
+		return " -node-only"
+	}
+	if role == "panel" {
+		return " -panel-only"
+	}
+	return ""
 }
 
 func inboundRequiresRestart(old, cfg WdttInboundConfig) bool {
