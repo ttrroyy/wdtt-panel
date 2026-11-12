@@ -4,7 +4,7 @@
 
 ## Установка
 
-Debian / Ubuntu, amd64 / arm64, root.
+Поддерживаемые системы: Debian и Ubuntu.
 
 Панель + нода:
 
