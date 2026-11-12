@@ -6,14 +6,21 @@
 
 Debian / Ubuntu, amd64 / arm64, root.
 
+Панель + нода:
+
 ```bash
-# Панель + нода
 bash <(curl -fsSL https://raw.githubusercontent.com/ttrroyy/wdtt-panel/main/install.sh) combined
+```
 
-# Только панель
+Только панель:
+
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/ttrroyy/wdtt-panel/main/install.sh) panel
+```
 
-# Только нода
+Только нода:
+
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/ttrroyy/wdtt-panel/main/install.sh) node
 ```
 
