@@ -93,7 +93,7 @@ if [[ ! -x /usr/local/wdtt-xray/bin/xray-linux-amd64 ]]; then
     for file in geoip.dat geosite.dat; do [[ ! -f "$XRAY_TEMP/files/$file" ]] || install -m 644 "$XRAY_TEMP/files/$file" /usr/local/wdtt-xray/bin/; done
 fi
 python3 "$SOURCE_DIR/scripts/local-install.py" migrate
-systemctl stop wdtt wdtt-protocol-watch 2>/dev/null || true
+systemctl stop wdtt wdtt-protocol-watch wdtt-fleet 2>/dev/null || true
 SAVED_PORT=$(python3 -c 'import sqlite3,pathlib; p=pathlib.Path("/etc/wdtt/panel.db"); print(sqlite3.connect(p).execute("SELECT port FROM panel_config WHERE id=1").fetchone()[0] if p.exists() else 2860)')
 export WDTT_BACKEND_PORT=$(python3 "$SOURCE_DIR/scripts/local-install.py" port "$SAVED_PORT")
 export WDTT_PUBLIC_URL="http://127.0.0.1:$WDTT_BACKEND_PORT"

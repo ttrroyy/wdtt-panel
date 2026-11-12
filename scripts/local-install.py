@@ -58,6 +58,7 @@ def choose():
 
 
 def cleanup_public_frontend():
+    if (BASE/'frontend.json').exists():return
     # Migration removes only marked locations and this panel's vhost; shared proxies survive.
     uninstall=runpy.run_path(str(Path(__file__).with_name('uninstall.py')))
     seen=set();changed=False
