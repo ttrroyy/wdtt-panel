@@ -59,9 +59,9 @@ jobs:
         name: Build, as install.sh does on a VPS
         run: |
           set -euo pipefail
-          python3 scripts/build-protocols.py --destination out --cache cache/protocols
+          python3 scripts/build-protocols.py --destination out --cache "$RUNNER_TEMP/cores/protocols"
           for protocol in dnstt vaydns slipstream masterdns cottendns soar openflux; do
-            python3 scripts/build-edges.py "$protocol" --destination out --cache cache/edges
+            python3 scripts/build-edges.py "$protocol" --destination out --cache "$RUNNER_TEMP/cores/edges"
           done
           python3 scripts/cores.py pack out "dist/wdtt-cores-linux-${{ matrix.arch }}.tar.gz"
       - if: steps.release.outputs.built != '1'
