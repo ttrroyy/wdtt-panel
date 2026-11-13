@@ -1,0 +1,96 @@
+name: Cores
+
+# The protocol cores built once here instead of on every VPS. The release tag is the fingerprint of what decides the
+# binaries (scripts/cores.py), so a VPS takes only cores built from its own installer's sources; it builds otherwise.
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/protocol-sources.json
+      - scripts/edge-sources.json
+      - scripts/build-protocols.py
+      - scripts/build-edges.py
+      - scripts/cores.py
+      - backends/soar/**
+      - .github/workflows/cores.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04: the oldest system the installer supports, so its glibc is what the cores need.
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests of the download and packing
+        run: cd scripts && python3 -m unittest test_cores
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="cores-$(python3 scripts/cores.py fingerprint)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --json assets -q '.assets[].name' 2>/dev/null | grep -qx "wdtt-cores-linux-${{ matrix.arch }}.tar.gz"; then
+            echo "built=1" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.release.outputs.built != '1'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.10"
+          cache: false
+      - if: steps.release.outputs.built != '1'
+        name: Toolchains
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential cmake pkg-config libssl-dev git
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - if: steps.release.outputs.built != '1'
+        name: Build, as install.sh does on a VPS
+        run: |
+          set -euo pipefail
+          python3 scripts/build-protocols.py --destination out --cache cache/protocols
+          for protocol in dnstt vaydns slipstream masterdns cottendns soar openflux; do
+            python3 scripts/build-edges.py "$protocol" --destination out --cache cache/edges
+          done
+          python3 scripts/cores.py pack out "dist/wdtt-cores-linux-${{ matrix.arch }}.tar.gz"
+      - if: steps.release.outputs.built != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cores-${{ matrix.arch }}
+          path: dist/*
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cores-*
+          merge-multiple: true
+          path: dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*)
+          [ ${#files[@]} -gt 0 ] || { echo "Nothing new to publish"; exit 0; }
+          if ! gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Ядра протоколов $TAG" --latest=false \
+              --notes "Готовые ядра протоколов для install.sh, собранные из закреплённых исходников (scripts/protocol-sources.json, scripts/edge-sources.json) с правками из scripts/build-protocols.py. Исходный код каждого ядра: репозиторий и ревизия в licenses/<ядро>/source.json внутри архива, там же лицензии."
+          fi
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "${files[@]}" --clobber

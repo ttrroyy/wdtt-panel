@@ -87,17 +87,18 @@ fi
 export PATH="$WDTT_GO_DIR/bin:/root/.cargo/bin:$PATH"
 export GOPATH=${GOPATH:-/var/cache/wdtt-build/go} GOCACHE=${GOCACHE:-/var/cache/wdtt-build/go-build}
 export CARGO_HOME=${CARGO_HOME:-/root/.cargo} RUSTUP_HOME=${RUSTUP_HOME:-/root/.rustup}
+install -d -m 700 /etc/wdtt /etc/wdtt/protocols
+install -d /usr/local/lib/wdtt /usr/local/lib/wdtt/protocols
+printf '%s\n' "$INSTALL_ROLE" >/etc/wdtt/role
 if [[ "$INSTALL_ROLE" != panel ]]; then
+# Ready-built cores from this installer's own sources (the Cores workflow), checked by SHA-256; built here only without them.
+step "Загрузка ядер протоколов"
+if ! python3 "$SOURCE_DIR/scripts/cores.py" fetch; then
 if [[ ! -x /root/.cargo/bin/rustup ]]; then
     curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
     install -d -m 700 /etc/wdtt && touch /etc/wdtt/rustup-installed
 fi
 /root/.cargo/bin/rustup toolchain install 1.97.1 --profile minimal
-fi
-install -d -m 700 /etc/wdtt /etc/wdtt/protocols
-install -d /usr/local/lib/wdtt /usr/local/lib/wdtt/protocols
-printf '%s\n' "$INSTALL_ROLE" >/etc/wdtt/role
-if [[ "$INSTALL_ROLE" != panel ]]; then
 step "Сборка ядер протоколов"
 for protocol in qwdtt wdtt-plus csqtt-2.1.9 csqtt-2.5.0 freeturn csqtt-2.5.3-community dnstt vaydns slipstream masterdns cottendns soar openflux; do
     case "$protocol" in
@@ -106,6 +107,7 @@ for protocol in qwdtt wdtt-plus csqtt-2.1.9 csqtt-2.5.0 freeturn csqtt-2.5.3-com
         *) python3 "$SOURCE_DIR/scripts/build-edges.py" "$protocol";;
     esac
 done
+fi
 fi
 step "Сборка панели"
 TEMP_BINARY=$(mktemp /tmp/wdtt-app.XXXXXX)
