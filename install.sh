@@ -6,36 +6,67 @@ umask 077
 . /etc/os-release
 case "$ID:$VERSION_ID" in debian:12|debian:13|ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) ;; *) echo 'Поддерживаются Debian 12/13 и Ubuntu 22.04/24.04/26.04 LTS.' >&2; exit 1;; esac
 SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)
+# Phase headers; Rawline shows them as the install steps.
+step() { printf '==> %s\n' "$1"; }
+USAGE='Использование: install.sh [panel|node|combined] | check [panel|node|combined] | status | uninstall [all|panel|node]'
 if [[ "${1:-}" == uninstall && -f /usr/local/lib/wdtt/uninstall.py ]]; then
-    exec python3 /usr/local/lib/wdtt/uninstall.py
+    exec python3 /usr/local/lib/wdtt/uninstall.py "${@:2}"
 fi
 if [[ ! -f "$SOURCE_DIR/scripts/protocols.py" ]]; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq git ca-certificates
-    SOURCE_DIR=$(mktemp -d /opt/wdtt-panel-install.XXXXXX)
-    git clone --depth 1 https://github.com/ttrroyy/wdtt-panel.git "$SOURCE_DIR"
+    if ! command -v git >/dev/null; then apt-get update -qq; apt-get install -y -qq git ca-certificates; fi
+    # One working copy, refreshed on every run; the full uninstall removes /opt/wdtt-panel.
+    SOURCE_DIR=/opt/wdtt-panel/source
+    install -d -m 700 /opt/wdtt-panel
+    if [[ -d "$SOURCE_DIR/.git" ]] && git -C "$SOURCE_DIR" fetch -q --depth 1 origin main; then
+        git -C "$SOURCE_DIR" reset -q --hard FETCH_HEAD
+    else
+        rm -rf -- "$SOURCE_DIR"
+        git clone -q --depth 1 https://github.com/ttrroyy/wdtt-panel.git "$SOURCE_DIR"
+    fi
     exec bash "$SOURCE_DIR/install.sh" "$@"
 fi
 
 [[ "${1:-}" != install ]] || shift
-if [[ "${1:-}" == uninstall ]]; then
-    exec python3 "$SOURCE_DIR/scripts/uninstall.py"
-fi
-INSTALL_ROLE=${1:-combined}
-case "$INSTALL_ROLE" in panel|node|combined) ;; *) echo 'Использование: install.sh [panel|node|combined|uninstall]' >&2; exit 1;; esac
-[[ $# -le 1 ]] || exit 1
-if [[ "$INSTALL_ROLE" == panel ]]; then export WDTT_PROTOCOLS=''; fi
-if ! command -v python3 >/dev/null || ! command -v curl >/dev/null; then
+case "${1:-}" in
+    uninstall) exec python3 "$SOURCE_DIR/scripts/uninstall.py" "${@:2}";;
+    status) exec python3 "$SOURCE_DIR/scripts/frontend.py" status;;
+esac
+CHECK_ONLY=0
+if [[ "${1:-}" == check ]]; then CHECK_ONLY=1; shift; fi
+REQUESTED_ROLE=${1:-combined}
+case "$REQUESTED_ROLE" in panel|node|combined) ;; *) echo "$USAGE" >&2; exit 1;; esac
+[[ $# -le 1 ]] || { echo "$USAGE" >&2; exit 1; }
+if ! command -v python3 >/dev/null || ! command -v curl >/dev/null || ! command -v ss >/dev/null; then
     apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 curl ca-certificates
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 curl ca-certificates iproute2
 fi
+# Installing never removes a component: a panel added to a node (or the reverse) makes the VPS combined.
+PREVIOUS_ROLE=$(cat /etc/wdtt/role 2>/dev/null || true)
+INSTALL_ROLE=$REQUESTED_ROLE
+if [[ -n "$PREVIOUS_ROLE" && "$PREVIOUS_ROLE" != "$REQUESTED_ROLE" ]]; then INSTALL_ROLE=combined; fi
+if [[ "$INSTALL_ROLE" == panel ]]; then
+    export WDTT_PROTOCOLS=''
+elif [[ "$REQUESTED_ROLE" == panel && -z "${WDTT_PROTOCOLS+set}" ]]; then
+    # The node's inbounds stay as they are when only the panel is added.
+    WDTT_PROTOCOLS=$(python3 -c 'import json; print(",".join(json.load(open("/etc/wdtt/installation.json")).get("protocols",[])))' 2>/dev/null || true)
+    export WDTT_PROTOCOLS
+fi
+if (( CHECK_ONLY )); then
+    WDTT_SELECTION_DIR=$(mktemp -d /tmp/wdtt-check.XXXXXX)
+    export WDTT_SELECTION_DIR
+    trap 'rm -rf -- "$WDTT_SELECTION_DIR"' EXIT
+fi
+SELECTION_DIR=${WDTT_SELECTION_DIR:-/etc/wdtt}
+export WDTT_PUBLIC_IP=${WDTT_PUBLIC_IP:-$(curl -4fsS --max-time 15 https://api.ipify.org)}
+step "Проверка совместимости"
 python3 "$SOURCE_DIR/scripts/local-install.py" choose
 python3 "$SOURCE_DIR/scripts/frontend.py" choose
 python3 "$SOURCE_DIR/scripts/preflight.py" "$INSTALL_ROLE"
-mapfile -t SELECTED < <(python3 -c 'import json; print("\n".join(json.load(open("/etc/wdtt/install-selection.json"))["protocols"]))')
-export WDTT_PUBLIC_IP=${WDTT_PUBLIC_IP:-$(curl -4fsS --max-time 15 https://api.ipify.org)}
+if (( CHECK_ONLY )); then exit 0; fi
+mapfile -t SELECTED < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["protocols"]))' "$SELECTION_DIR/install-selection.json")
 export DEBIAN_FRONTEND=noninteractive
+step "Установка пакетов"
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl git python3 openssl openssh-client sshpass iproute2 iptables nftables wireguard-tools unzip build-essential cmake pkg-config libssl-dev
 case $(uname -m) in x86_64) GO_ARCH=amd64; XRAY_ARCH=64;; aarch64) GO_ARCH=arm64; XRAY_ARCH=arm64-v8a;; *) echo 'Неподдерживаемая архитектура'; exit 1;; esac
@@ -53,11 +84,12 @@ if [[ ! -x "$WDTT_GO_DIR/bin/go" ]] || [[ $("$WDTT_GO_DIR/bin/go" version) != *g
     rm -f -- "$GO_ARCHIVE"
 fi
 export PATH="$WDTT_GO_DIR/bin:/root/.cargo/bin:$PATH"
-export GOPATH=${GOPATH:-/root/go} GOCACHE=${GOCACHE:-/root/.cache/go-build}
+export GOPATH=${GOPATH:-/var/cache/wdtt-build/go} GOCACHE=${GOCACHE:-/var/cache/wdtt-build/go-build}
 export CARGO_HOME=${CARGO_HOME:-/root/.cargo} RUSTUP_HOME=${RUSTUP_HOME:-/root/.rustup}
 if [[ "$INSTALL_ROLE" != panel ]]; then
 if [[ ! -x /root/.cargo/bin/rustup ]]; then
     curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.1
+    install -d -m 700 /etc/wdtt && touch /etc/wdtt/rustup-installed
 fi
 /root/.cargo/bin/rustup toolchain install 1.97.1 --profile minimal
 fi
@@ -65,6 +97,7 @@ install -d -m 700 /etc/wdtt /etc/wdtt/protocols
 install -d /usr/local/lib/wdtt /usr/local/lib/wdtt/protocols
 printf '%s\n' "$INSTALL_ROLE" >/etc/wdtt/role
 if [[ "$INSTALL_ROLE" != panel ]]; then
+step "Сборка ядер протоколов"
 for protocol in qwdtt wdtt-plus csqtt-2.1.9 csqtt-2.5.0 freeturn csqtt-2.5.3-community dnstt vaydns slipstream masterdns cottendns soar openflux; do
     case "$protocol" in
         wdtt) ;;
@@ -73,6 +106,7 @@ for protocol in qwdtt wdtt-plus csqtt-2.1.9 csqtt-2.5.0 freeturn csqtt-2.5.3-com
     esac
 done
 fi
+step "Сборка панели"
 TEMP_BINARY=$(mktemp /tmp/wdtt-app.XXXXXX)
 (cd "$SOURCE_DIR"; CGO_ENABLED=0 go build -trimpath -o "$TEMP_BINARY" ./cmd/wdtt)
 install -m 755 "$TEMP_BINARY" /usr/local/bin/wdtt-app.new
@@ -115,6 +149,7 @@ if not p.exists():p.write_text(json.dumps({'log':{'loglevel':'warning'},'inbound
 p=Path('/etc/wdtt/dns-router.json')
 if not p.exists():p.write_text('{"zones":[],"routes":[]}')
 PYCONFIG
+step "Настройка служб"
 cat >/etc/systemd/system/wdtt.service <<'UNIT'
 [Unit]
 Description=WDTT Panel and VPN
@@ -235,6 +270,17 @@ printf '#!/bin/sh\nexec python3 /usr/local/lib/wdtt/uninstall.py all "$@"\n' >/u
 chmod 755 /usr/local/bin/wdtt-panel-uninstall /usr/local/bin/wdtt-node-uninstall /usr/local/bin/wdtt-uninstall
 printf '#!/bin/sh\nexec /usr/local/bin/wdtt-app -create-node-key "$@"\n' >/usr/local/bin/wdtt-node-key
 chmod 755 /usr/local/bin/wdtt-node-key
+# Login and password on stdin, one per line; the running panel rereads them on SIGHUP, the VPN keeps running.
+cat >/usr/local/bin/wdtt-panel-credentials <<'CREDENTIALS'
+#!/bin/sh
+set -e
+/usr/local/bin/wdtt-app -set-credentials
+if [ "$(cat /etc/wdtt/role)" != node ]; then systemctl kill --kill-whom=main -s HUP wdtt; fi
+echo 'Логин и пароль панели изменены'
+CREDENTIALS
+chmod 755 /usr/local/bin/wdtt-panel-credentials
+# Working copies of earlier installers.
+rm -rf -- /opt/wdtt-panel-install.*
 install -m 755 "$SOURCE_DIR/scripts/panel-firewall.py" /usr/local/lib/wdtt/panel-firewall.py
 cat >/etc/systemd/system/wdtt-panel-firewall.service <<'UNIT'
 [Unit]
@@ -269,6 +315,8 @@ else
     systemctl enable --now wdtt-fleet
     systemctl restart wdtt-fleet
 fi
+step "Публикация панели"
 python3 /usr/local/lib/wdtt/frontend.py configure
 python3 /usr/local/lib/wdtt/frontend.py info
+echo 'Смена логина и пароля: wdtt-panel-credentials. Недостающий компонент добавляется повторной установкой с ролью panel или node.'
 echo 'Удаление панели: wdtt-panel-uninstall. Ноды: wdtt-node-uninstall. Всей установки: wdtt-uninstall'

@@ -14,6 +14,7 @@ func main() {
 	panelOnly := false
 	initPanel := false
 	createKey := false
+	setCredentials := false
 	filtered := make([]string, 0, len(os.Args))
 	for _, arg := range os.Args {
 		switch arg {
@@ -27,6 +28,8 @@ func main() {
 			initPanel = true
 		case "-create-node-key":
 			createKey = true
+		case "-set-credentials":
+			setCredentials = true
 		case "-version", "--version":
 			fmt.Println(panel.FormatPanelVersion())
 			os.Exit(0)
@@ -41,6 +44,12 @@ func main() {
 	}
 	if initPanel {
 		if err := panel.ConfigureInstallation(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if setCredentials {
+		if err := panel.SetCredentials(); err != nil {
 			log.Fatal(err)
 		}
 		return

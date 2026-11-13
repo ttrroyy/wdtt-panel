@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"github.com/ildarmaga/wdtt/pkg/paneldb"
 	"golang.org/x/crypto/bcrypt"
+	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -135,4 +137,40 @@ func ensureInstallationPaths(cfg *PanelConfig) error {
 		}
 	}
 	return nil
+}
+
+func installCredentialsPath() string { return filepath.Join(wdttConfigDir, "install-credentials") }
+
+// writeInstallCredentials keeps the file the installer and Rawline read in step with the panel login.
+func writeInstallCredentials(username, password string) error {
+	return os.WriteFile(installCredentialsPath(), []byte(username+"\n"+password+"\n"), 0600)
+}
+
+func validCredential(value string) bool {
+	return value != "" && len(value) <= 256 && !strings.ContainsAny(value, "\r\n\x00")
+}
+
+// SetCredentials reads "username\npassword" from stdin; the running panel picks them up on restart.
+func SetCredentials() error {
+	data, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+	if err != nil {
+		return err
+	}
+	lines := strings.SplitN(strings.TrimRight(string(data), "\n"), "\n", 2)
+	if len(lines) != 2 || !validCredential(lines[0]) || !validCredential(lines[1]) {
+		return fmt.Errorf("нужны логин и пароль: по одному в строке, без пустых значений")
+	}
+	cfg, err := loadPanelConfig()
+	if err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(lines[1]), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	cfg.Username, cfg.PasswordHash = lines[0], string(hash)
+	if err := savePanelConfig(cfg); err != nil {
+		return err
+	}
+	return writeInstallCredentials(lines[0], lines[1])
 }

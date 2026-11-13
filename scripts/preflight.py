@@ -7,11 +7,13 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
 
 BASE=Path('/etc/wdtt')
+SELECTION=Path(os.environ.get('WDTT_SELECTION_DIR') or BASE)
 PUBLIC={'wdtt':[56000,56001,56003],'qwdtt':[56100,56102,56103],'wdtt-plus':[56200],'csqtt-2.1.9':[56300],'csqtt-2.5.0':[56400],'freeturn':[56500],'csqtt-2.5.3-community':[56700]}
 POOLS={'wdtt':[66,70],'qwdtt':[67,73],'wdtt-plus':[68],'csqtt-2.1.9':[69],'csqtt-2.5.0':[71],'freeturn':[72],'csqtt-2.5.3-community':[74]}
 DNS={'dnstt','vaydns','slipstream','masterdns','cottendns','soar'}
@@ -75,6 +77,28 @@ def required_ports(selection):
     if DNS.intersection(selection['protocols']) and selection.get('dns_zone'):udp.add(53);tcp.add(53)
     return dict(tcp=tcp,udp=udp)
 
+def addresses(name):
+    try:return sorted({row[4][0] for row in socket.getaddrinfo(name,None,socket.AF_INET)})
+    except OSError:return []
+
+def dns_errors(selection,frontend,public_ip,role):
+    """Certbot and the DNS tunnels need records that already point here; checked before anything is installed."""
+    errors=[]
+    names=[('Домен панели',frontend['domain'])] if frontend['mode']!='local' else []
+    tunnels=DNS.intersection(selection['protocols']) if role!='panel' else set()
+    zone=selection.get('dns_zone','')
+    if tunnels and zone:
+        if not selection.get('dns_ns'):errors.append('Для DNS-туннелей укажите NS-имя с A-записью на эту VPS')
+        else:names.append(('NS-имя DNS-зоны',selection['dns_ns']))
+        if 'slipstream' in tunnels and len(zone)>18:errors.append('Для Slipstream зона '+zone+' длиннее 18 символов')
+        if 'soar' in tunnels and len(zone)>26:errors.append('Для Soar зона '+zone+' длиннее 26 символов')
+        if selection.get('dns_ns','').endswith('.'+zone):errors.append('NS-имя должно быть вне зоны '+zone+', например ns.'+zone.split('.',1)[-1])
+    for label,name in names:
+        found=addresses(name)
+        if not found:errors.append(label+' '+name+': нет A-записи')
+        elif public_ip and public_ip not in found:errors.append(label+' '+name+' указывает на '+', '.join(found)+', а IP этой VPS '+public_ip)
+    return errors
+
 def main(role):
     errors=[]
     if os.geteuid()!=0:errors.append('Нужны права root')
@@ -82,10 +106,14 @@ def main(role):
     if sys.version_info<(3,9):errors.append('Нужен Python 3.9 или новее')
     if not Path('/run/systemd/system').exists():errors.append('Требуется работающий systemd')
     if not shutil.which('ss'):errors.append('Для проверки портов установите iproute2 (команда ss)')
-    if shutil.disk_usage('/').free<2*1024**3:errors.append('Нужно не менее 2 ГиБ свободного места; сборка всех ядер на чистой VPS требует дополнительного места')
+    # The first node build downloads Rust and Go toolchains and their caches.
+    need=5 if role!='panel' and not Path('/root/.rustup').exists() else 2
+    if shutil.disk_usage('/').free<need*1024**3:errors.append(f'Нужно не менее {need} ГиБ свободного места')
     previous=(BASE/'role').read_text().strip() if (BASE/'role').exists() else ''
-    if previous and previous!=role:errors.append('На VPS установлена роль '+previous+'. Установщик не меняет действующую роль автоматически; используйте новую VPS для роли '+role)
-    selection=json.loads((BASE/'install-selection.json').read_text());frontend=json.loads((BASE/'frontend-selection.json').read_text())
+    # install.sh only ever widens the role: a panel or node added to the other becomes combined.
+    if previous and previous!=role and role!='combined':errors.append('На VPS уже установлено: '+previous+'. Добавить можно только недостающий компонент')
+    selection=json.loads((SELECTION/'install-selection.json').read_text());frontend=json.loads((SELECTION/'frontend-selection.json').read_text())
+    errors+=dns_errors(selection,frontend,os.environ.get('WDTT_PUBLIC_IP',''),role)
     if role!='panel':
         if not Path('/dev/net/tun').exists():errors.append('Нет /dev/net/tun: включите TUN/TAP у провайдера')
         status=Path('/proc/self/status').read_text();match=re.search(r'^CapEff:\s*([0-9a-f]+)',status,re.M)
@@ -96,6 +124,8 @@ def main(role):
         pools=[f'10.{pool}.0.0/'+('24' if name=='csqtt-2.5.3-community' else '16') for name in selection['protocols'] for pool in POOLS.get(name,[])]+(['10.254.0.0/16'] if 'openflux' in selection['protocols'] else [])
         errors+=route_conflicts(json.loads(command('ip','-j','-4','route','show','table','all')),pools)
     mode=frontend['mode']
+    current=json.loads((BASE/'frontend.json').read_text()).get('mode','') if (BASE/'frontend.json').exists() else ''
+    if current in ('nginx','caddy') and mode in ('nginx','caddy') and current!=mode:errors.append('Панель уже опубликована через '+current+'; выберите его или локальный режим')
     if mode=='nginx' and shutil.which('nginx'):command('nginx','-t')
     if mode=='caddy' and shutil.which('caddy') and Path('/etc/caddy/Caddyfile').exists():command('caddy','validate','--config','/etc/caddy/Caddyfile','--adapter','caddyfile')
     if mode!='local':

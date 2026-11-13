@@ -23,8 +23,12 @@ def run(*args):
     if result.returncode:raise RuntimeError(args[0]+': '+(result.stderr or result.stdout)[-2000:])
     return result.stdout
 def read_state():return json.loads(STATE.read_text()) if STATE.exists() else {}
+# A check writes its choices elsewhere, so it changes nothing in /etc/wdtt.
+SELECTION=Path(os.environ.get('WDTT_SELECTION_DIR') or BASE)
 def ask(label,default=''):
-    with open('/dev/tty','r+') as tty:
+    try:tty=open('/dev/tty','r+')
+    except OSError:raise ValueError('Нет терминала для вопроса «'+label+'»: задайте ответ переменной окружения') from None
+    with tty:
         tty.write(label+(' ['+default+']' if default else '')+': ');tty.flush();return tty.readline().strip() or default
 def domain(value):
     value=value.strip().lower().rstrip('.')
@@ -45,8 +49,8 @@ def choose():
         if email is None:email=ask('Email для Certbot (можно оставить пустым)',previous.get('email',''))
         if email and (len(email)>254 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email)):raise ValueError('Некорректный email')
         result.update(email=email,cert_name='wdtt-panel-'+result['domain'])
-    BASE.mkdir(mode=0o700,parents=True,exist_ok=True)
-    (BASE/'frontend-selection.json').write_text(json.dumps(result))
+    SELECTION.mkdir(mode=0o700,parents=True,exist_ok=True)
+    (SELECTION/'frontend-selection.json').write_text(json.dumps(result))
 
 def nginx_config(s,secure):
     host=s['domain'];http=f'''server {{
@@ -145,8 +149,35 @@ def info():
     else:print('Панель: http://127.0.0.1:'+str(port)+path+'\nSSH-туннель: ssh -L '+str(port)+':127.0.0.1:'+str(port)+' root@<IP-VPS>\nЛокальный режим: конфиги копируются вручную; подписка доступна через SSH.')
     print('Логин и пароль: /etc/wdtt/install-credentials. Пути сохраняются при переустановке.')
 
+def status():
+    """One JSON line for clients: what is installed here and how the panel is reached."""
+    import sqlite3
+    import urllib.request
+    role=(BASE/'role').read_text().strip() if (BASE/'role').exists() else ''
+    s=read_state() if role else {}
+    install=json.loads((BASE/'installation.json').read_text()) if role and (BASE/'installation.json').exists() else {}
+    result=dict(role=role,mode=s.get('mode',''),domain=s.get('domain',''),protocols=install.get('protocols',[]) if role in ('node','combined') else [],
+                dns_zone=install.get('dns_zone',''),dns_ns=install.get('dns_ns',''),public_ip=install.get('public_ip',''),
+                panel_url='',panel_port=0,panel_path='',username='',password='',version='')
+    if not result['public_ip']:
+        try:result['public_ip']=urllib.request.urlopen('https://api.ipify.org',timeout=15).read().decode().strip()
+        except OSError:pass
+    if role and (BASE/'panel.db').exists():
+        with sqlite3.connect('file:'+str(BASE/'panel.db')+'?mode=ro',uri=True) as db:
+            port,path,user=db.execute('SELECT port,web_base_path,username FROM panel_config WHERE id=1').fetchone()
+        result.update(panel_port=port,panel_path=path,username=user)
+        if role!='node':
+            result['panel_url']='https://'+s['domain']+path if s.get('mode') in ('nginx','caddy') else 'http://127.0.0.1:'+str(port)+path
+    credentials=BASE/'install-credentials'
+    if role and credentials.exists():
+        lines=credentials.read_text().splitlines()
+        if len(lines)>=2:result.update(username=lines[0],password=lines[1])
+    if role and Path('/usr/local/bin/wdtt-app').exists():
+        result['version']=subprocess.run(['/usr/local/bin/wdtt-app','-version'],capture_output=True,text=True).stdout.strip()
+    print(json.dumps(result,ensure_ascii=False))
+
 def configure():
-    s=json.loads((BASE/'frontend-selection.json').read_text());old=read_state()
+    s=json.loads((SELECTION/'frontend-selection.json').read_text());old=read_state()
     if s['mode']=='local':
         for p in (NGINX,CADDY):
             if p.exists():p.unlink()
@@ -188,5 +219,5 @@ def configure():
     run('systemctl','enable','--now','certbot.timer')
 
 if __name__=='__main__':
-    try:{'choose':choose,'configure':configure,'renew':renew,'info':info}[sys.argv[1]]()
+    try:{'choose':choose,'configure':configure,'renew':renew,'info':info,'status':status}[sys.argv[1]]()
     except Exception as error:print('HTTPS: '+str(error),file=sys.stderr);sys.exit(1)

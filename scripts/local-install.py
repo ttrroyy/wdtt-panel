@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 BASE=Path('/etc/wdtt')
+SELECTION=Path(os.environ.get('WDTT_SELECTION_DIR') or BASE)
 LEGACY=['wdtt','qwdtt','wdtt-plus','csqtt-2.1.9','csqtt-2.5.0','freeturn','csqtt-2.5.3-community']
 EXTRA=['dnstt','vaydns','slipstream','masterdns','cottendns','soar','openflux']
 
@@ -34,13 +35,15 @@ def select_protocols(value):
 
 
 def ask(label,default=''):
-    with open('/dev/tty','r+') as terminal:
+    try:terminal=open('/dev/tty','r+')
+    except OSError:raise ValueError('Нет терминала для вопроса «'+label+'»: задайте ответ переменной окружения') from None
+    with terminal:
         terminal.write(label+(' ['+default+']' if default else '')+': ');terminal.flush()
         return terminal.readline().strip() or default
 
 
 def choose():
-    BASE.mkdir(mode=0o700,parents=True,exist_ok=True)
+    SELECTION.mkdir(mode=0o700,parents=True,exist_ok=True)
     settings=BASE/'installation.json'
     previous=json.loads(settings.read_text()) if settings.exists() else {}
     choice=os.environ.get('WDTT_PROTOCOLS')
@@ -54,7 +57,7 @@ def choose():
         if not zone and 'WDTT_DNS_ZONE' not in os.environ:zone=ask('Делегированная DNS-зона (пусто — создать DNS-инбаунды позже)')
         if zone and not ns:ns=ask('NS-имя, A-запись которого указывает на VPS')
     result=dict(protocols=selected,dns_zone=zone,dns_ns=ns,fresh=not (BASE/'panel.db').exists())
-    (BASE/'install-selection.json').write_text(json.dumps(result))
+    (SELECTION/'install-selection.json').write_text(json.dumps(result))
 
 
 def cleanup_public_frontend():
@@ -118,7 +121,9 @@ def configure():
 
 if __name__=='__main__':
     operation=sys.argv[1]
-    if operation=='choose':choose()
+    if operation=='choose':
+        try:choose()
+        except ValueError as error:print(error,file=sys.stderr);sys.exit(1)
     elif operation=='port':print(free_port(int(sys.argv[2]) if len(sys.argv)>2 else 2860))
     elif operation=='migrate':cleanup_public_frontend()
     elif operation=='configure':configure()

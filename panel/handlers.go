@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"reflect"
 	"strconv"
+	"os"
 	"strings"
 
 	"github.com/ildarmaga/wdtt/pkg/paneldb"
@@ -521,6 +522,10 @@ func (a *App) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "неверный текущий пароль", 401)
 		return
 	}
+	if req.NewUsername != "" && !validCredential(req.NewUsername) || req.NewPassword != "" && !validCredential(req.NewPassword) {
+		jsonError(w, "некорректный логин или пароль", 400)
+		return
+	}
 	if req.NewPassword != "" {
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 		if err != nil {
@@ -532,7 +537,20 @@ func (a *App) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 	if req.NewUsername != "" {
 		a.cfg.Username = req.NewUsername
 	}
-	savePanelConfig(a.cfg)
+	if err := savePanelConfig(a.cfg); err != nil {
+		jsonError(w, err.Error(), 500)
+		return
+	}
+	// The file the installer and Rawline read follows the panel login.
+	password := req.NewPassword
+	if old, err := os.ReadFile(installCredentialsPath()); password == "" && err == nil {
+		if lines := strings.Split(string(old), "\n"); len(lines) >= 2 {
+			password = lines[1]
+		}
+	}
+	if password != "" {
+		_ = writeInstallCredentials(a.cfg.Username, password)
+	}
 	jsonOK(w, nil)
 }
 

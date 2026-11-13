@@ -73,7 +73,7 @@ func startPanelServer(cfg *PanelConfig, handler http.Handler) error {
 	if scheme == "http" && (certFile != "" || keyFile != "") {
 		log.Printf("Проверьте пути к сертификату и перезапустите панель")
 	}
-	log.Printf("Логин: %s / пароль по умолчанию: wdtt (смените в настройках)", cfg.Username)
+	log.Printf("Логин: %s; данные входа: %s", cfg.Username, installCredentialsPath())
 	srv := &http.Server{
 		Handler:  handler,
 		ErrorLog: log.New(quietLogger{}, "", log.LstdFlags),

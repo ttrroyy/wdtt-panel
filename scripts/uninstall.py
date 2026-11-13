@@ -136,7 +136,7 @@ def main(target="all"):
         stream.write_text(stream.read_text().replace('include /etc/nginx/wdtt-panel-sni.map;', ''))
     for name in ('/etc/nginx/conf.d/wdtt-panel.conf','/etc/nginx/conf.d/wdtt-panel-acme.conf',
                  '/etc/sysctl.d/90-wdtt-panel.conf','/etc/letsencrypt/renewal-hooks/deploy/wdtt-panel',
-                 '/usr/local/bin/wdtt-app','/usr/local/bin/wdtt-dns','/usr/local/bin/wdtt-panel-uninstall','/usr/local/bin/wdtt-node-uninstall','/usr/local/bin/wdtt-uninstall','/usr/local/bin/wdtt-node-key','/usr/local/bin/wdtt-mtu-rules.sh','/etc/caddy/wdtt-panel/panel.caddy'):
+                 '/usr/local/bin/wdtt-app','/usr/local/bin/wdtt-dns','/usr/local/bin/wdtt-panel-uninstall','/usr/local/bin/wdtt-node-uninstall','/usr/local/bin/wdtt-uninstall','/usr/local/bin/wdtt-node-key','/usr/local/bin/wdtt-panel-credentials','/usr/local/bin/wdtt-mtu-rules.sh','/etc/caddy/wdtt-panel/panel.caddy'):
         Path(name).unlink(missing_ok=True)
     if mapping.exists() and not mapping.read_text().strip(): mapping.unlink()
     issued = Path('/etc/wdtt/owned-acme-cert')
@@ -147,7 +147,10 @@ def main(target="all"):
         if not used: run('certbot','delete','--non-interactive','--cert-name',cert_name)
     for unit in ('wdtt','wdtt-xray','wdtt-protocol-watch','wdtt-panel-firewall','wdtt-protocol@','wdtt-edge@','wdtt-dns','wdtt-fleet'):
         Path('/etc/systemd/system/'+unit+'.service').unlink(missing_ok=True)
-    for folder in ('/etc/wdtt','/etc/wdtt-xray','/usr/local/lib/wdtt','/usr/local/wdtt-xray','/opt/wdtt-panel','/var/lib/wdtt-panel'):
+    # Rust only when this installer put it there; Go builds always use the installer's own cache.
+    if Path('/etc/wdtt/rustup-installed').exists():
+        for folder in ('/root/.cargo','/root/.rustup'):shutil.rmtree(folder,ignore_errors=True)
+    for folder in ('/etc/wdtt','/etc/wdtt-xray','/usr/local/lib/wdtt','/usr/local/wdtt-xray','/opt/wdtt-panel','/var/lib/wdtt-panel','/var/cache/wdtt-build'):
         shutil.rmtree(folder, ignore_errors=False) if Path(folder).exists() else None
     run('systemctl', 'daemon-reload')
     if Path('/usr/sbin/nginx').exists():

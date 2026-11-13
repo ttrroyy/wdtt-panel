@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -62,6 +65,16 @@ func Run() error {
 	}
 
 	app := &App{cfg: cfg}
+	// wdtt-panel-credentials changes the login in the database and sends SIGHUP: the VPN in this process keeps running.
+	reload := make(chan os.Signal, 1)
+	signal.Notify(reload, syscall.SIGHUP)
+	go func() {
+		for range reload {
+			if fresh, err := loadPanelConfig(); err == nil {
+				app.cfg.Username, app.cfg.PasswordHash = fresh.Username, fresh.PasswordHash
+			}
+		}
+	}()
 	app.startSubscriptionServer()
 	base := cfg.basePath()
 	mux := http.NewServeMux()
