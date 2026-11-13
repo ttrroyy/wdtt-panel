@@ -163,8 +163,6 @@ def configure():
     run('systemctl','enable',s['mode'])
     if s['mode']=='caddy':
         conf=Path('/etc/caddy/Caddyfile');text=conf.read_text() if conf.exists() else ''
-        # Replace only the unmodified package welcome site; keep existing virtual hosts.
-        if ':80 {' in text and 'root * /usr/share/caddy' in text:text=''
         if IMPORT not in text:conf.write_text(text.rstrip()+'\n'+IMPORT+'\n')
     if old.get('mode') in ('nginx','caddy') and old['mode']!=s['mode']:raise ValueError('Для смены прокси сначала освободите 443 или выберите текущий прокси')
     WEBROOT.mkdir(mode=0o755,parents=True,exist_ok=True)

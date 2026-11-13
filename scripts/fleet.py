@@ -217,7 +217,7 @@ def add_node(payload):
         else:
             snap=remote(node,{'op':'state'})
             if snap['role']!='node':raise ValueError('Подключается только установка в режиме node')
-            if any(v for v in snap['users']['memberships'].values()):raise ValueError('На ноде есть пользователи с инбаундами. Подключите чистую ноду, чтобы сохранить их данные')
+            adopt_users(node,snap)
             node['status']='ready'
         s['nodes'].append(node);atomic(ROOT/'state.json',s)
     return public_node(node)
@@ -231,16 +231,42 @@ def add_api_node(payload):
     node=dict(id='n-'+secrets.token_hex(8),name=name,address=safe_host(url.hostname),api_url='https://'+url.netloc,api_key=token,ssh_port=0,status='ready',fingerprint='',machine_id='')
     snap=remote(node,{'op':'state'})
     if snap.get('role')!='node':raise ValueError('Подключается только установка в режиме node')
-    if any(v for v in snap['users']['memberships'].values()):raise ValueError('На ноде уже есть назначенные инбаунды. Подключите чистую ноду, чтобы сохранить пользователей')
     machine=snap.get('machine_id','')
     with locked():
         s=state()
         if machine==Path('/etc/machine-id').read_text().strip() or any(n['machine_id']==machine for n in s['nodes']):raise ValueError('Эта VPS уже привязана')
         if not re.fullmatch('[a-f0-9]{32}',machine):raise ValueError('Некорректный machine-id ноды')
-        node['machine_id']=machine;node_directory(node).mkdir(mode=0o700,parents=True);s['nodes'].append(node);atomic(ROOT/'state.json',s)
+        node['machine_id']=machine;node_directory(node).mkdir(mode=0o700,parents=True);adopt_users(node,snap);s['nodes'].append(node);atomic(ROOT/'state.json',s)
     return public_node(node)
 
 def public_node(node):return {k:v for k,v in node.items() if k not in ('server_key','client_key','api_key')}
+
+
+def adopt_users(node,snapshot):
+    registry=read(ROOT/'inbounds.json',{})
+    for p in snapshot.get('profiles',[]):
+        if not p.get('template'):registry[node['id']+'--'+p['id']]=dict(node_id=node['id'],local_id=p['id'],name=node['name']+' · '+p['name'],present=bool(p.get('present')))
+    incoming=snapshot['users'];memberships=incoming['memberships']
+    with sqlite3.connect(BASE/'panel.db',timeout=15) as db:
+        db.row_factory=sqlite3.Row;columns={r[1] for r in db.execute('PRAGMA table_info(wdtt_users)')}
+        for user in incoming['rows']:
+            selected=[node['id']+'--'+name for name in memberships.get(user['sub_id'],[]) if node['id']+'--'+name in registry]
+            if not selected:continue
+            existing=db.execute('SELECT password,sub_id FROM wdtt_users WHERE password=? OR sub_id=?',(user['password'],user['sub_id'])).fetchall()
+            if existing and any(r['password']!=user['password'] or r['sub_id']!=user['sub_id'] for r in existing):raise ValueError('Конфликт идентификаторов пользователей ноды; данные не изменены')
+            if not existing:
+                row={k:v for k,v in user.items() if k in columns};row.update(up_bytes=0,down_bytes=0,last_seen_at=0,comment=(node['name']+' · '+(row.get('comment') or 'User'))[:128])
+                names=list(row);db.execute('INSERT INTO wdtt_users('+','.join('"'+k+'"' for k in names)+') VALUES('+','.join('?' for _ in names)+')',[row[k] for k in names])
+            old=db.execute('SELECT protocols FROM vpn_user_inbounds WHERE sub_id=?',(user['sub_id'],)).fetchone();values=json.loads(old[0]) if old else []
+            values+=[name for name in selected if name not in values]
+            db.execute('INSERT INTO vpn_user_inbounds VALUES(?,?) ON CONFLICT(sub_id) DO UPDATE SET protocols=excluded.protocols',(user['sub_id'],json.dumps(values)))
+        main=db.execute('SELECT u.sub_id FROM wdtt_users u JOIN wdtt_global g ON u.password=g.main_password WHERE g.id=1').fetchone()
+        if main:
+            old=db.execute('SELECT protocols FROM vpn_user_inbounds WHERE sub_id=?',(main[0],)).fetchone();values=json.loads(old[0]) if old else []
+            values+=[name for name,p in registry.items() if p['node_id']==node['id'] and p['present'] and name not in values]
+            db.execute('INSERT INTO vpn_user_inbounds VALUES(?,?) ON CONFLICT(sub_id) DO UPDATE SET protocols=excluded.protocols',(main[0],json.dumps(values)))
+        atomic(ROOT/'inbounds.json',registry)
+        db.execute('UPDATE wdtt_global SET users_rev=users_rev+1 WHERE id=1')
 
 def api(payload):
     ensure_local();op=payload.get('op','list')
@@ -306,6 +332,7 @@ def reconcile():
             if node['status']=='installing':
                 snap=remote(node,{'op':'state'})
                 if snap['role']!='node':raise ValueError('Установлена неверная роль')
+                with locked():adopt_users(node,snap)
                 node['status']='ready'
             if node['status']!='ready':continue
             control=dict(users,rows=[{k:v for k,v in u.items() if k not in ('up_bytes','down_bytes','last_seen_at')} for u in users['rows']])

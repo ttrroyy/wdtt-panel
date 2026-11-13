@@ -8,6 +8,56 @@ import re
 import shlex
 import shutil
 import subprocess
+import sqlite3
+
+
+def remaining_role(role,target):
+    if target not in ('panel','node'):raise ValueError('Укажите panel, node или all')
+    if role==target:return ''
+    if role=='combined':return 'node' if target=='panel' else 'panel'
+    raise ValueError('Компонент '+target+' на этой VPS не установлен')
+
+
+def checked(*args):
+    result=run(*args)
+    if result.returncode:raise RuntimeError(result.stderr.strip() or 'Не выполнено: '+' '.join(args))
+    return result
+
+
+def remove_component(target):
+    root=Path('/etc/wdtt');role_file=root/'role'
+    role=role_file.read_text().strip() if role_file.exists() else 'combined'
+    next_role=remaining_role(role,target)
+    if not next_role:return False
+    unit=Path('/etc/systemd/system/wdtt.service');text=unit.read_text()
+    if '/usr/local/bin/wdtt-app' not in text:raise RuntimeError('wdtt.service не принадлежит этой установке')
+    if target=='node':
+        stop_node()
+        with sqlite3.connect(root/'panel.db',timeout=15) as db:
+            rows=db.execute('SELECT sub_id,protocols FROM vpn_user_inbounds').fetchall()
+            backup=root/'removed-node-inbounds.json';backup.write_text(json.dumps(dict(rows)));os.chmod(backup,0o600)
+            for sub,raw in rows:db.execute('UPDATE vpn_user_inbounds SET protocols=? WHERE sub_id=?',(json.dumps([name for name in json.loads(raw) if '--' in name]),sub))
+            db.execute('UPDATE wdtt_inbound SET enable=0 WHERE id=1');db.execute('UPDATE wdtt_global SET users_rev=users_rev+1 WHERE id=1')
+        state=root/'protocols/state.json'
+        if state.exists():
+            value=json.loads(state.read_text());value['profiles']={k:False for k in value.get('profiles',{})};state.write_text(json.dumps(value))
+        for name in ('protocol-inbounds.json','protocol-subscriptions.json','protocols/route-options.json'):(root/name).unlink(missing_ok=True)
+        inventory=root/'fleet/state.json'
+        if inventory.exists():
+            value=json.loads(inventory.read_text());value['nodes']=[n for n in value['nodes'] if n['id']!='local'];inventory.write_text(json.dumps(value))
+        text=re.sub(r'(?m)^ExecStartPost=.*\n','',text)
+    else:
+        checked('systemctl','stop','wdtt');checked('systemctl','disable','--now','wdtt-fleet')
+    text=re.sub(r'(/usr/local/bin/wdtt-app)(?: -(?:node|panel)-only)?',r'\1 -'+next_role+'-only',text)
+    role_file.write_text(next_role+'\n');unit.write_text(text)
+    checked('systemctl','daemon-reload');checked('systemctl','enable','--now','wdtt');checked('systemctl','restart','wdtt')
+    if next_role=='panel':checked('systemctl','enable','--now','wdtt-fleet','wdtt-panel-firewall');checked('systemctl','restart','wdtt-panel-firewall')
+    frontend=root/'frontend.json'
+    if frontend.exists():
+        (root/'frontend-selection.json').write_bytes(frontend.read_bytes())
+        checked('python3','/usr/local/lib/wdtt/frontend.py','configure')
+    print('Удалён компонент '+target+'. Сохранены '+next_role+', пользователи и настройки. Для полного удаления: wdtt-uninstall')
+    return True
 
 
 def run(*args):
@@ -19,8 +69,7 @@ def remove_locations(text):
     return re.sub(r'# wdtt-panel acme begin.*?# wdtt-panel acme end', '', text, flags=re.S)
 
 
-def main():
-    if os.geteuid() != 0: raise SystemExit('Запустите от root')
+def stop_node():
     units = ['wdtt', 'wdtt-xray', 'wdtt-protocol-watch', 'wdtt-panel-firewall','wdtt-dns','wdtt-fleet']
     units += ['wdtt-protocol@'+name for name in ('qwdtt','wdtt-plus','csqtt-2.1.9','csqtt-2.5.0','freeturn','csqtt-2.5.3-community')]
     edge_networks=set()
@@ -61,6 +110,11 @@ def main():
     run('nft','delete','table','ip','wdtt')
     run('ip', 'rule', 'del', 'priority', '10990', 'fwmark', '0x77/0xff', 'lookup', '10990')
     run('ip', 'route', 'flush', 'table', '10990')
+
+def main(target="all"):
+    if os.geteuid() != 0: raise SystemExit('Запустите от root')
+    if target != "all" and remove_component(target):return
+    stop_node()
     seen = set()
     for folder in ('/etc/nginx/sites-enabled','/etc/nginx/conf.d'):
         for file in Path(folder).glob('*'):
@@ -81,7 +135,7 @@ def main():
         stream.write_text(stream.read_text().replace('include /etc/nginx/wdtt-panel-sni.map;', ''))
     for name in ('/etc/nginx/conf.d/wdtt-panel.conf','/etc/nginx/conf.d/wdtt-panel-acme.conf',
                  '/etc/sysctl.d/90-wdtt-panel.conf','/etc/letsencrypt/renewal-hooks/deploy/wdtt-panel',
-                 '/usr/local/bin/wdtt-app','/usr/local/bin/wdtt-dns','/usr/local/bin/wdtt-panel-uninstall','/usr/local/bin/wdtt-node-key','/usr/local/bin/wdtt-mtu-rules.sh'):
+                 '/usr/local/bin/wdtt-app','/usr/local/bin/wdtt-dns','/usr/local/bin/wdtt-panel-uninstall','/usr/local/bin/wdtt-node-uninstall','/usr/local/bin/wdtt-uninstall','/usr/local/bin/wdtt-node-key','/usr/local/bin/wdtt-mtu-rules.sh','/etc/caddy/wdtt-panel/panel.caddy'):
         Path(name).unlink(missing_ok=True)
     if mapping.exists() and not mapping.read_text().strip(): mapping.unlink()
     issued = Path('/etc/wdtt/owned-acme-cert')
@@ -92,14 +146,18 @@ def main():
         if not used: run('certbot','delete','--non-interactive','--cert-name',cert_name)
     for unit in ('wdtt','wdtt-xray','wdtt-protocol-watch','wdtt-panel-firewall','wdtt-protocol@','wdtt-edge@','wdtt-dns','wdtt-fleet'):
         Path('/etc/systemd/system/'+unit+'.service').unlink(missing_ok=True)
-    for folder in ('/etc/wdtt','/etc/wdtt-xray','/usr/local/lib/wdtt','/usr/local/wdtt-xray','/opt/wdtt-panel'):
+    for folder in ('/etc/wdtt','/etc/wdtt-xray','/usr/local/lib/wdtt','/usr/local/wdtt-xray','/opt/wdtt-panel','/var/lib/wdtt-panel'):
         shutil.rmtree(folder, ignore_errors=False) if Path(folder).exists() else None
     run('systemctl', 'daemon-reload')
     if Path('/usr/sbin/nginx').exists():
         if run('nginx','-t').returncode == 0: run('systemctl','reload','nginx')
         else: raise SystemExit('Панель удалена, но нужна проверка nginx -t')
+    if Path('/usr/bin/caddy').exists() and Path('/etc/caddy/Caddyfile').exists():
+        if run('caddy','validate','--config','/etc/caddy/Caddyfile','--adapter','caddyfile').returncode==0:run('systemctl','reload','caddy')
+        else:raise SystemExit('Установка удалена, но нужна проверка Caddyfile')
     print('WDTT Panel, пользователи и её сертификаты удалены. Существующие сторонние сертификаты и панели сохранены.')
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    main(sys.argv[1] if len(sys.argv)>1 else "all")

@@ -1,11 +1,24 @@
 import json
 import tempfile
+import sqlite3
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 import fleet
 
 class FleetTests(unittest.TestCase):
+    def test_pairing_preserves_existing_node_users_and_adds_owner_membership(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with sqlite3.connect(root/'panel.db') as db:
+                db.executescript("CREATE TABLE wdtt_users(password TEXT PRIMARY KEY,sub_id TEXT UNIQUE,comment TEXT,up_bytes INTEGER,down_bytes INTEGER,last_seen_at INTEGER);CREATE TABLE vpn_user_inbounds(sub_id TEXT PRIMARY KEY,protocols TEXT);CREATE TABLE wdtt_global(id INTEGER,main_password TEXT,users_rev INTEGER);INSERT INTO wdtt_users VALUES('owner-password','owner-sub','ADMIN',0,0,0);INSERT INTO wdtt_global VALUES(1,'owner-password',0);")
+            snapshot=dict(profiles=[dict(id='wdtt',name='WDTT',present=True)],users=dict(rows=[dict(password='node-password',sub_id='node-sub',comment='ADMIN',up_bytes=100,down_bytes=200,last_seen_at=0)],memberships={'node-sub':['wdtt']}))
+            with patch.object(fleet,'BASE',root),patch.object(fleet,'ROOT',root/'fleet'):fleet.adopt_users(dict(id='n-one',name='Amsterdam'),snapshot)
+            with sqlite3.connect(root/'panel.db') as db:
+                self.assertEqual(db.execute("SELECT password,up_bytes,down_bytes FROM wdtt_users WHERE sub_id='node-sub'").fetchone(),('node-password',0,0))
+                self.assertEqual(json.loads(db.execute("SELECT protocols FROM vpn_user_inbounds WHERE sub_id='owner-sub'").fetchone()[0]),['n-one--wdtt'])
+                self.assertEqual(json.loads(db.execute("SELECT protocols FROM vpn_user_inbounds WHERE sub_id='node-sub'").fetchone()[0]),['n-one--wdtt'])
+
     def test_routing_scopes_inbounds_to_nodes_and_keeps_global_users(self):
         config=dict(outbounds=[dict(tag='direct',protocol='freedom')],routing=dict(rules=[
             dict(inboundTag=['vpn-wdtt'],outboundTag='local'),

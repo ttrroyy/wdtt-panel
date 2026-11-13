@@ -229,8 +229,10 @@ if python3 -c 'import json,sys; s=json.load(open("/etc/wdtt/install-selection.js
 fi
 printf '{"op":"seed-default"}\n' | python3 /usr/local/lib/wdtt/protocols.py
 install -m 755 "$SOURCE_DIR/scripts/uninstall.py" /usr/local/lib/wdtt/uninstall.py
-printf '#!/bin/sh\nexec python3 /usr/local/lib/wdtt/uninstall.py "$@"\n' >/usr/local/bin/wdtt-panel-uninstall
-chmod 755 /usr/local/bin/wdtt-panel-uninstall
+printf '#!/bin/sh\nexec python3 /usr/local/lib/wdtt/uninstall.py panel "$@"\n' >/usr/local/bin/wdtt-panel-uninstall
+printf '#!/bin/sh\nexec python3 /usr/local/lib/wdtt/uninstall.py node "$@"\n' >/usr/local/bin/wdtt-node-uninstall
+printf '#!/bin/sh\nexec python3 /usr/local/lib/wdtt/uninstall.py all "$@"\n' >/usr/local/bin/wdtt-uninstall
+chmod 755 /usr/local/bin/wdtt-panel-uninstall /usr/local/bin/wdtt-node-uninstall /usr/local/bin/wdtt-uninstall
 printf '#!/bin/sh\nexec /usr/local/bin/wdtt-app -create-node-key "$@"\n' >/usr/local/bin/wdtt-node-key
 chmod 755 /usr/local/bin/wdtt-node-key
 install -m 755 "$SOURCE_DIR/scripts/panel-firewall.py" /usr/local/lib/wdtt/panel-firewall.py
@@ -269,4 +271,4 @@ else
 fi
 python3 /usr/local/lib/wdtt/frontend.py configure
 python3 /usr/local/lib/wdtt/frontend.py info
-echo 'Полное удаление: wdtt-panel-uninstall'
+echo 'Удаление панели: wdtt-panel-uninstall. Ноды: wdtt-node-uninstall. Всей установки: wdtt-uninstall'
