@@ -61,7 +61,8 @@ def remove_component(target):
 
 
 def run(*args):
-    return subprocess.run(args, capture_output=True, text=True)
+    try:return subprocess.run(args, capture_output=True, text=True)
+    except FileNotFoundError:return subprocess.CompletedProcess(args,127,stdout='',stderr='Команда отсутствует: '+args[0])
 
 
 def remove_locations(text):
