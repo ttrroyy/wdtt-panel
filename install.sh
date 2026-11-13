@@ -42,7 +42,8 @@ if ! command -v python3 >/dev/null || ! command -v curl >/dev/null || ! command 
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 curl ca-certificates iproute2
 fi
 # Installing never removes a component: a panel added to a node (or the reverse) makes the VPS combined.
-PREVIOUS_ROLE=$(cat /etc/wdtt/role 2>/dev/null || true)
+# An install from before the role file is told by its files (frontend.py role).
+PREVIOUS_ROLE=$(cat /etc/wdtt/role 2>/dev/null || python3 "$SOURCE_DIR/scripts/frontend.py" role 2>/dev/null || true)
 INSTALL_ROLE=$REQUESTED_ROLE
 if [[ -n "$PREVIOUS_ROLE" && "$PREVIOUS_ROLE" != "$REQUESTED_ROLE" ]]; then INSTALL_ROLE=combined; fi
 if [[ "$INSTALL_ROLE" == panel ]]; then

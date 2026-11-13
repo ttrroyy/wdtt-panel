@@ -149,11 +149,20 @@ def info():
     else:print('Панель: http://127.0.0.1:'+str(port)+path+'\nSSH-туннель: ssh -L '+str(port)+':127.0.0.1:'+str(port)+' root@<IP-VPS>\nЛокальный режим: конфиги копируются вручную; подписка доступна через SSH.')
     print('Логин и пароль: /etc/wdtt/install-credentials. Пути сохраняются при переустановке.')
 
+def role():
+    """What this VPS runs. Installs from before /etc/wdtt/role (2026-11-12) are told by their files: the panel's
+    database with protocols was the only layout then, a node is known by its agent."""
+    if (BASE/'role').exists():return (BASE/'role').read_text().strip()
+    if (BASE/'panel.db').exists():
+        install=json.loads((BASE/'installation.json').read_text()) if (BASE/'installation.json').exists() else {}
+        return 'combined' if install.get('protocols') else 'panel'
+    return 'node' if (BASE/'node-agent.json').exists() else ''
+
 def status():
     """One JSON line for clients: what is installed here and how the panel is reached."""
     import sqlite3
     import urllib.request
-    role=(BASE/'role').read_text().strip() if (BASE/'role').exists() else ''
+    role=globals()['role']()
     s=read_state() if role else {}
     install=json.loads((BASE/'installation.json').read_text()) if role and (BASE/'installation.json').exists() else {}
     result=dict(role=role,mode=s.get('mode',''),domain=s.get('domain',''),protocols=install.get('protocols',[]) if role in ('node','combined') else [],
@@ -219,5 +228,5 @@ def configure():
     run('systemctl','enable','--now','certbot.timer')
 
 if __name__=='__main__':
-    try:{'choose':choose,'configure':configure,'renew':renew,'info':info,'status':status}[sys.argv[1]]()
+    try:{'choose':choose,'configure':configure,'renew':renew,'info':info,'status':status,'role':lambda:print(role())}[sys.argv[1]]()
     except Exception as error:print('HTTPS: '+str(error),file=sys.stderr);sys.exit(1)

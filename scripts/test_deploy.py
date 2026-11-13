@@ -57,7 +57,7 @@ class DnsChecks(unittest.TestCase):
 
 class Status(unittest.TestCase):
     def setUp(self):
-        self.folder = tempfile.TemporaryDirectory(); self.base = Path(self.folder.name)
+        self.folder = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); self.base = Path(self.folder.name)
         self.patches = [patch.object(frontend, 'BASE', self.base), patch.object(frontend, 'STATE', self.base/'frontend.json'),
                         patch.object(frontend.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout='1.4.83\n')),
                         patch('urllib.request.urlopen', side_effect=OSError('offline'))]
@@ -98,6 +98,16 @@ class Status(unittest.TestCase):
         s = self.status()
         self.assertEqual(s['panel_url'], 'https://panel.example.org/Abcdefghijklmnopq/')
         self.assertEqual(s['protocols'], [])
+
+    def test_install_from_before_the_role_file_is_found(self):
+        self.install('combined')
+        (self.base/'role').unlink()
+        s = self.status()
+        self.assertEqual(s['role'], 'combined'); self.assertEqual(s['username'], 'admin')
+        (self.base/'installation.json').write_text(json.dumps(dict(protocols=[])))
+        self.assertEqual(self.status()['role'], 'panel')
+        node = self.base/'node'; node.mkdir(); (node/'node-agent.json').write_text('{}')
+        with patch.object(frontend, 'BASE', node): self.assertEqual(frontend.role(), 'node')
 
     def test_node_alone_has_no_panel_link(self):
         self.install('node')
@@ -147,7 +157,7 @@ class InstallerCommandLine(unittest.TestCase):
                 code = script.replace('/etc/wdtt/', root+'/')
                 if previous: Path(root, 'role').write_text(previous+'\n')
                 Path(root, 'installation.json').write_text(json.dumps(dict(protocols=['wdtt', 'dnstt'])))
-                env = dict(os.environ, ROOT=root, REQUESTED_ROLE=requested)
+                env = dict(os.environ, ROOT=root, REQUESTED_ROLE=requested, SOURCE_DIR=str(Path(__file__).resolve().parent.parent))
                 env.pop('WDTT_PROTOCOLS', None)
                 if protocols is not None: env['WDTT_PROTOCOLS'] = protocols
                 out = subprocess.run(['bash', '-c', 'set -eu\n'+code+'\necho "$INSTALL_ROLE|${WDTT_PROTOCOLS-unset}"'], env=env, capture_output=True, text=True, check=True).stdout
