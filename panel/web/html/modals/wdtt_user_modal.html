@@ -134,7 +134,7 @@
               <template slot="content">
                 <div style="width:280px;max-width:calc(100vw - 64px);text-align:center">
                   <div style="margin-bottom:8px">[[ entry.title ]]</div>
-                  <canvas role="button" tabindex="0" title="Скопировать QR-код" @click="copyShareQR(entry)" @keydown.enter.prevent="copyShareQR(entry)" @keydown.space.prevent="copyShareQR(entry)" :id="'user-share-qr-'+entry.id" style="width:100%;height:auto;background:white;border-radius:8px" :aria-label="'QR: '+entry.title"></canvas>
+                  <canvas role="button" tabindex="0" title="Скопировать QR-код" @click="copyShareQR(entry)" @keydown.enter.prevent="copyShareQR(entry)" @keydown.space.prevent="copyShareQR(entry)" :id="'user-share-qr-'+entry.id" width="384" height="384" style="width:100%;height:auto;background:white;border-radius:8px" :aria-label="'QR: '+entry.title"></canvas>
                   <a-space style="margin-top:12px">
                     <a-button icon="copy" @click="copyField(entry.value,entry.title)">Ссылка</a-button>
                     <a-button icon="copy" @click="copyShareQR(entry)">QR-код</a-button>

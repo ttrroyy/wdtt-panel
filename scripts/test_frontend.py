@@ -33,3 +33,10 @@ class FrontendTests(unittest.TestCase):
             frontend.renew();install.assert_not_called();reload.assert_not_called()
 
 if __name__=='__main__':unittest.main()
+
+class ShareQrTests(unittest.TestCase):
+    def test_qr_canvas_is_square_before_it_is_drawn(self):
+        # The popover places itself on open: an empty canvas lower than the QR left it cut off at the bottom of the page.
+        html=(Path(__file__).parents[1]/'panel/web/html/modals/wdtt_user_modal.html').read_text(encoding='utf-8')
+        self.assertIn(':id="\'user-share-qr-\'+entry.id" width="384" height="384"',html)
+        self.assertIn('size:384',html)
