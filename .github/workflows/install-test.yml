@@ -1,0 +1,28 @@
+name: Install test
+
+# The installer as a client runs it on a fresh VPS (PanelCommands.install): a node and a panel with a node.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [install.sh, scripts/**, .github/workflows/install-test.yml]
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        role: [node, combined]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install as the client does
+        run: |
+          sudo cp install.sh /root/wdtt-install.sh
+          sudo env WDTT_PROTOCOLS='wdtt,qwdtt' WDTT_FRONTEND=local WDTT_DNS_ZONE='' WDTT_DNS_NS='' bash /root/wdtt-install.sh ${{ matrix.role }} 2>&1 | tee install.log
+          test "${PIPESTATUS[0]}" = 0
+      - name: Status
+        if: always()
+        run: sudo bash /root/wdtt-install.sh status 2>&1 | tail -40 || true
