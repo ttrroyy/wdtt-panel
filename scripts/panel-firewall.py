@@ -20,6 +20,26 @@ def rules(chain, interface,ports=None,tcp_ports=None):
     return result
 
 
+def ssh_ports(sshd_config=None, listeners=None):
+    """The ports SSH really answers on: sshd's own configuration and its listening sockets, and 22 always,
+    so a server on another SSH port is never shut out of it."""
+    if sshd_config is None:
+        sshd_config = subprocess.run(['sshd', '-T'], capture_output=True, text=True).stdout
+    if listeners is None:
+        listeners = subprocess.run(['ss', '-Hltnp'], capture_output=True, text=True).stdout
+    ports = {22}
+    for line in sshd_config.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0].lower() == 'port' and fields[1].isdigit(): ports.add(int(fields[1]))
+        if len(fields) == 2 and fields[0].lower() == 'listenaddress' and fields[1].rsplit(':', 1)[-1].isdigit() and ':' in fields[1]:
+            ports.add(int(fields[1].rsplit(':', 1)[-1]))
+    for line in listeners.splitlines():
+        if 'sshd' not in line: continue
+        fields = line.split()
+        if len(fields) >= 4 and fields[3].rsplit(':', 1)[-1].isdigit(): ports.add(int(fields[3].rsplit(':', 1)[-1]))
+    return {port for port in ports if 0 < port < 65536}
+
+
 def main():
     runtime=runpy.run_path('/usr/local/lib/wdtt/protocols.py')
     current=runtime['state']()
@@ -30,7 +50,7 @@ def main():
         target[name]=runtime['published_ports'](name)
     runtime['atomic'](runtime['ROOT']/'public-ports.json',transport_ports)
     ports=sorted({port for row in transport_ports.values() for port in row})
-    tcp=sorted({22,80,443}|{port for row in tcp_ports.values() for port in row}|({53} if 53 in ports else set()))
+    tcp=sorted({80,443}|ssh_ports()|{port for row in tcp_ports.values() for port in row}|({53} if 53 in ports else set()))
     runtime['atomic'](runtime['ROOT']/'public-tcp-ports.json',tcp_ports)
     for binary, family, icmp in [('iptables', '-4', 'icmp'), ('ip6tables', '-6', 'ipv6-icmp')]:
         routes = json.loads(command('ip', family, '-j', 'route', 'show', 'default'))
