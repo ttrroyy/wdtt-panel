@@ -70,7 +70,8 @@ export DEBIAN_FRONTEND=noninteractive
 step "Установка пакетов"
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl git python3 openssl openssh-client sshpass iproute2 iptables nftables wireguard-tools unzip build-essential cmake pkg-config libssl-dev
-case $(uname -m) in x86_64) GO_ARCH=amd64; XRAY_ARCH=64;; aarch64) GO_ARCH=arm64; XRAY_ARCH=arm64-v8a;; *) echo 'Неподдерживаемая архитектура'; exit 1;; esac
+# Go's checksums pinned here: go.dev no longer serves them as plain files.
+case $(uname -m) in x86_64) GO_ARCH=amd64; XRAY_ARCH=64; GO_CHECKSUM=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5;; aarch64) GO_ARCH=arm64; XRAY_ARCH=arm64-v8a; GO_CHECKSUM=3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797;; *) echo 'Неподдерживаемая архитектура'; exit 1;; esac
 WDTT_GO_DIR=/usr/local/go
 if [[ ! -x "$WDTT_GO_DIR/bin/go" ]] || [[ $("$WDTT_GO_DIR/bin/go" version) != *go1.26.10* ]]; then
     WDTT_GO_DIR=/usr/local/lib/wdtt/toolchains/go
@@ -78,7 +79,6 @@ fi
 if [[ ! -x "$WDTT_GO_DIR/bin/go" ]] || [[ $("$WDTT_GO_DIR/bin/go" version) != *go1.26.10* ]]; then
     GO_ARCHIVE=$(mktemp /tmp/wdtt-go.XXXXXX.tar.gz)
     curl -fsSL "https://go.dev/dl/go1.26.10.linux-${GO_ARCH}.tar.gz" -o "$GO_ARCHIVE"
-    GO_CHECKSUM=$(curl -fsSL "https://go.dev/dl/go1.26.10.linux-${GO_ARCH}.tar.gz.sha256")
     printf '%s  %s\n' "$GO_CHECKSUM" "$GO_ARCHIVE" | sha256sum -c -
     install -d /usr/local/lib/wdtt/toolchains
     tar -xzf "$GO_ARCHIVE" -C /usr/local/lib/wdtt/toolchains

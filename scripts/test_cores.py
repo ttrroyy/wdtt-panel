@@ -126,6 +126,9 @@ class CoresTests(unittest.TestCase):
         self.assertLess(fetch, rust)
         self.assertLess(rust, build)
         self.assertIn('if ! python3 "$SOURCE_DIR/scripts/cores.py" fetch; then', script)
+        # go.dev answers its .sha256 links with a web page: the checksums are pinned in the installer.
+        self.assertNotIn('tar.gz.sha256', script)
+        self.assertRegex(script, r'GO_CHECKSUM=[0-9a-f]{64};;')
 
 
 if __name__ == '__main__':
