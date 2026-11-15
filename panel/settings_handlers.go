@@ -160,6 +160,10 @@ func (a *App) handleSettingUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "неверный порт панели", 400)
 		return
 	}
+	if proxy, _ := panelProxyTLS(); proxy != "" && strings.TrimSpace(req.WebCertFile+req.WebKeyFile+req.SubCertFile+req.SubKeyFile) != "" {
+		jsonError(w, "HTTPS управляется "+proxy+"; оставьте пути встроенного TLS пустыми", 400)
+		return
+	}
 	if req.WebBasePath != "" {
 		if !strings.HasPrefix(req.WebBasePath, "/") {
 			req.WebBasePath = "/" + req.WebBasePath

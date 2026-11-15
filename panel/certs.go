@@ -643,6 +643,9 @@ func removeLetsEncryptFiles(name string) error {
 }
 
 func applyPanelCert(cfg *PanelConfig, certFile, keyFile string, restart bool) error {
+	if proxy, _ := panelProxyTLS(); proxy != "" {
+		return fmt.Errorf("HTTPS управляется %s; встроенный TLS панели не требуется", proxy)
+	}
 	certFile = strings.TrimSpace(certFile)
 	keyFile = strings.TrimSpace(keyFile)
 	if err := validatePanelTLS(certFile, keyFile); err != nil {

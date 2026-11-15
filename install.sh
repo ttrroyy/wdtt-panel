@@ -78,8 +78,19 @@ if [[ ! -x "$WDTT_GO_DIR/bin/go" ]] || [[ $("$WDTT_GO_DIR/bin/go" version) != *g
 fi
 if [[ ! -x "$WDTT_GO_DIR/bin/go" ]] || [[ $("$WDTT_GO_DIR/bin/go" version) != *go1.26.10* ]]; then
     GO_ARCHIVE=$(mktemp /tmp/wdtt-go.XXXXXX.tar.gz)
-    curl -fsSL "https://go.dev/dl/go1.26.10.linux-${GO_ARCH}.tar.gz" -o "$GO_ARCHIVE"
-    printf '%s  %s\n' "$GO_CHECKSUM" "$GO_ARCHIVE" | sha256sum -c -
+    GO_DOWNLOADED=0
+    for GO_MIRROR in https://go.dev/dl https://dl.google.com/go https://mirrors.aliyun.com/golang; do
+        if curl -fsSL --connect-timeout 15 --max-time 300 --retry 2 "$GO_MIRROR/go1.26.10.linux-${GO_ARCH}.tar.gz" -o "$GO_ARCHIVE" &&
+            printf '%s  %s\n' "$GO_CHECKSUM" "$GO_ARCHIVE" | sha256sum -c -; then
+            GO_DOWNLOADED=1
+            break
+        fi
+    done
+    if (( ! GO_DOWNLOADED )); then
+        rm -f -- "$GO_ARCHIVE"
+        echo 'Не удалось загрузить и проверить архив Go ни с одного зеркала.' >&2
+        exit 1
+    fi
     install -d /usr/local/lib/wdtt/toolchains
     tar -xzf "$GO_ARCHIVE" -C /usr/local/lib/wdtt/toolchains
     rm -f -- "$GO_ARCHIVE"

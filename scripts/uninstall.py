@@ -97,7 +97,10 @@ def stop_node():
     for binary in ('iptables', 'ip6tables'):
         for table in ('filter', 'nat', 'mangle'):
             for line in run(binary, '-w', '3', '-t', table, '-S').stdout.splitlines():
-                args = shlex.split(line)
+                try: args = shlex.split(line)
+                except ValueError:
+                    print(f'Предупреждение: пропущено нечитаемое правило {binary}/{table}; остальные правила обрабатываются')
+                    continue
                 if not args or args[0] != '-A': continue
                 owned = any(token.startswith('WDTT_PANEL') or token in ('wdtt0','wdtt-raw','WDTT_MANAGED','WDTT_RAW_DIRECT') or re.fullmatch(r'wp[1-6][hn]',token) or re.fullmatch(r'we[0-9]+[hn]',token) or token.split(':')[0].split('/')[0] in edge_ips for token in args)
                 owned = owned or bool(re.search(r'10\.253\.[1-6]\.2(?:/32)?', line))

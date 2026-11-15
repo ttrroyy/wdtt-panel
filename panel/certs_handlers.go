@@ -41,12 +41,7 @@ func (a *App) handleCertsList(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]interface{}{
 		"certs": certs,
 		"acme":  acmeStatus(),
-		"panel": map[string]interface{}{
-			"webCertFile": a.cfg.WebCertFile,
-			"webKeyFile":  a.cfg.WebKeyFile,
-			"webDomain":   a.cfg.WebDomain,
-			"tlsActive":   panelTLSEnabled(a.cfg),
-		},
+		"panel": panelCertPanelMap(a.cfg),
 	})
 }
 

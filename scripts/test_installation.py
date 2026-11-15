@@ -1,5 +1,7 @@
 import argparse
+import hashlib
 import json
+import os
 import types
 import importlib.util
 from pathlib import Path
@@ -26,6 +28,19 @@ def old_locations(*_):
 
 
 class InstallationTests(unittest.TestCase):
+    def test_malformed_foreign_firewall_comment_does_not_abort_removal(self):
+        calls=[]
+        def command(*args):
+            calls.append(args)
+            rules="-A INPUT -m comment --comment user's-rule -j ACCEPT\n-A INPUT -i wdtt0 -j ACCEPT\n-A INPUT -m comment --comment other-panel -j ACCEPT\n"
+            return types.SimpleNamespace(returncode=0,stdout=rules if '-S' in args else '',stderr='')
+        with tempfile.TemporaryDirectory() as directory, patch.object(uninstall,'Path',side_effect=lambda p:Path(directory)/str(p).lstrip('/')),patch.object(uninstall,'run',side_effect=command),patch.object(uninstall.shutil,'rmtree'):
+            uninstall.stop_node()
+        deletions=[c for c in calls if '-D' in c]
+        self.assertTrue(deletions)
+        self.assertTrue(all('wdtt0' in c for c in deletions))
+        self.assertTrue(any(c[:2]==('nft','delete') for c in calls))
+
     def test_remove_panel_keeps_local_node_and_user_database(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
@@ -92,6 +107,30 @@ class InstallationTests(unittest.TestCase):
         result = uninstall.remove_locations(text)
         self.assertIn('location /other',result)
         self.assertNotIn('/wdtt/',result)
+
+
+@unittest.skipUnless(os.name == 'posix', 'installer runs on Linux')
+class GoDownloadTests(unittest.TestCase):
+    def test_fallback_verifies_every_archive_and_rejects_corruption(self):
+        source = Path(__file__).resolve().parents[1].joinpath('install.sh').read_text()
+        download = source[source.index('    GO_ARCHIVE='):source.index('    install -d /usr/local/lib/wdtt/toolchains')]
+        for first_works, corrupt in ((True, False), (False, False), (False, True)):
+            with self.subTest(first_works=first_works, corrupt=corrupt), tempfile.TemporaryDirectory() as folder:
+                script = '''set -eu
+mktemp() { command mktemp "$CASE_DIR/archive.XXXXXX"; }
+curl() {
+    local url="${@: -3:1}" archive="${@: -1}"
+    printf '%s\\n' "$url" >> "$CASE_DIR/calls"
+    if [[ "$FIRST_WORKS" != 1 && "$url" != *mirrors.aliyun.com* ]]; then return 22; fi
+    printf '%s' "$PAYLOAD" > "$archive"
+}
+''' + download
+                env = dict(os.environ, CASE_DIR=folder, FIRST_WORKS=str(int(first_works)), PAYLOAD='corrupt' if corrupt else 'archive', GO_ARCH='amd64', GO_CHECKSUM=hashlib.sha256(b'archive').hexdigest())
+                result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1 if corrupt else 0, result.stderr)
+                calls = Path(folder, 'calls').read_text().splitlines()
+                self.assertEqual(len(calls), 1 if first_works else 3)
+                self.assertEqual(len(list(Path(folder).glob('archive.*'))), 0 if corrupt else 1)
 
 
 class TerminalPromptTests(unittest.TestCase):

@@ -5,6 +5,7 @@
       message="HTTPS панели активен" class="cert-alert" :style="{ marginBottom: '12px' }">
       <template slot="description">
         Домен: [[ certState.panel.webDomain || '—' ]]
+        <div v-if="certState.panel.proxyTLS">Сертификат обслуживает [[ certState.panel.proxy ]]. Пути встроенного TLS оставьте пустыми.</div>
       </template>
     </a-alert>
     <a-alert v-else type="warning" show-icon class="cert-alert" message="HTTPS не настроен"
@@ -15,14 +16,14 @@
       <template #title>{{ i18n "pages.settings.publicKeyPath"}}</template>
       <template #description>{{ i18n "pages.settings.publicKeyPathDesc"}}</template>
       <template #control>
-        <a-input type="text" v-model="allSetting.webCertFile"></a-input>
+        <a-input type="text" v-model="allSetting.webCertFile" :disabled="certState.panel.proxyTLS"></a-input>
       </template>
     </a-setting-list-item>
     <a-setting-list-item paddings="small">
       <template #title>{{ i18n "pages.settings.privateKeyPath"}}</template>
       <template #description>{{ i18n "pages.settings.privateKeyPathDesc"}}</template>
       <template #control>
-        <a-input type="text" v-model="allSetting.webKeyFile"></a-input>
+        <a-input type="text" v-model="allSetting.webKeyFile" :disabled="certState.panel.proxyTLS"></a-input>
       </template>
     </a-setting-list-item>
   </a-collapse-panel>
@@ -48,8 +49,8 @@
       </template>
       <template slot="certActions" slot-scope="_, row">
         <a-space :size="4" wrap>
-          <a-button size="small" type="primary" @click="applyCert(row, false)">Выбрать</a-button>
-          <a-button size="small" @click="applyCert(row, true)">Выбрать + restart</a-button>
+          <a-button size="small" type="primary" @click="applyCert(row, false)" :disabled="certState.panel.proxyTLS">Выбрать</a-button>
+          <a-button size="small" @click="applyCert(row, true)" :disabled="certState.panel.proxyTLS">Выбрать + restart</a-button>
           <a-button v-if="row.acmeManaged" size="small" icon="sync" @click="renewCert(row)"></a-button>
           <a-button v-if="row.source === 'wdtt'" size="small" icon="sync" title="Обновить DTLS"
             @click="renewDtlsCert(row)"></a-button>
@@ -127,8 +128,8 @@
           placeholder="80"></a-input-number>
       </a-col>
       <a-col :xs="12" :sm="10">
-        <a-checkbox v-model="certForm.applyToPanel">Применить к панели</a-checkbox>
-        <a-checkbox v-model="certForm.restartPanel">Restart панели</a-checkbox>
+        <a-checkbox v-model="certForm.applyToPanel" :disabled="certState.panel.proxyTLS">Применить к панели</a-checkbox>
+        <a-checkbox v-model="certForm.restartPanel" :disabled="certState.panel.proxyTLS">Restart панели</a-checkbox>
       </a-col>
       <a-col :span="24">
         <a-button type="primary" icon="safety-certificate" @click="issueDomainCert()" :loading="certState.busy">

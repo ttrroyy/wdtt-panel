@@ -3,9 +3,11 @@ package panel
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -118,6 +120,11 @@ func normalizePanelConfig(cfg *PanelConfig) {
 	}
 	cfg.RemarkModel = normalizeRemarkModel(cfg.RemarkModel)
 	normalizeSubConfig(cfg)
+	if proxy, _ := panelProxyTLS(); proxy != "" {
+		// The installer proxies HTTP to loopback; backend TLS would break that upstream.
+		cfg.WebCertFile, cfg.WebKeyFile = "", ""
+		cfg.SubCertFile, cfg.SubKeyFile = "", ""
+	}
 	cfg.DashboardPollSec = clampDashboardPollSec(cfg.DashboardPollSec)
 	if cfg.DashboardPollSec == 0 {
 		cfg.DashboardPollSec = defaultDashboardPollSec
@@ -191,17 +198,38 @@ func syncSubCertFromPanel(cfg *PanelConfig) bool {
 	return changed
 }
 
+func panelProxyTLS() (string, string) {
+	data, err := os.ReadFile(filepath.Join(wdttConfigDir, "frontend.json"))
+	if err != nil {
+		return "", ""
+	}
+	var frontend struct {
+		Mode   string `json:"mode"`
+		Domain string `json:"domain"`
+	}
+	if json.Unmarshal(data, &frontend) != nil || strings.TrimSpace(frontend.Domain) == "" || (frontend.Mode != "nginx" && frontend.Mode != "caddy") {
+		return "", ""
+	}
+	return frontend.Mode, frontend.Domain
+}
+
 func panelCertPanelMap(cfg *PanelConfig) map[string]interface{} {
 	if cfg == nil {
 		return map[string]interface{}{}
 	}
+	proxy, domain := panelProxyTLS()
+	if proxy == "" {
+		domain = cfg.WebDomain
+	}
 	return map[string]interface{}{
 		"webCertFile": cfg.WebCertFile,
 		"webKeyFile":  cfg.WebKeyFile,
-		"webDomain":   cfg.WebDomain,
+		"webDomain":   domain,
 		"subCertFile": cfg.SubCertFile,
 		"subKeyFile":  cfg.SubKeyFile,
-		"tlsActive":   panelTLSEnabled(cfg),
+		"tlsActive":   proxy != "" || panelTLSEnabled(cfg),
+		"proxyTLS":    proxy != "",
+		"proxy":       proxy,
 	}
 }
 

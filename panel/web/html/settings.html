@@ -386,6 +386,10 @@
           this.acmeCronForm.minute = obj.acme.cronMinute ?? 12;
         }
         if (obj.panel) {
+          if (obj.panel.proxyTLS) {
+            this.certForm.applyToPanel = false;
+            this.certForm.restartPanel = false;
+          }
           this.allSetting.webCertFile = obj.panel.webCertFile || '';
           this.allSetting.webKeyFile = obj.panel.webKeyFile || '';
           if (obj.panel.subCertFile) this.allSetting.subCertFile = obj.panel.subCertFile;
