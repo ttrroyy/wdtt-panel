@@ -32,6 +32,13 @@ class FrontendTests(unittest.TestCase):
         with patch.object(frontend,'read_state',return_value=dict(mode='caddy',cert_name='wdtt-panel-panel.example.org')),patch.object(frontend,'install_cert') as install,patch.object(frontend,'proxy_reload') as reload,patch.dict(frontend.os.environ,{'RENEWED_LINEAGE':'/etc/letsencrypt/live/someone-else'}):
             frontend.renew();install.assert_not_called();reload.assert_not_called()
 
+    def test_a_question_reads_the_answer_from_a_terminal(self):
+        import os
+        import terminal_stub
+        patcher,rout,fds=terminal_stub.answering('\n')
+        with patcher:self.assertEqual(frontend.ask('Доступ','1'),'1')
+        for fd in fds+(rout,):os.close(fd)
+
 if __name__=='__main__':unittest.main()
 
 class ShareQrTests(unittest.TestCase):

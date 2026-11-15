@@ -26,3 +26,20 @@ jobs:
       - name: Status
         if: always()
         run: sudo bash /root/wdtt-install.sh status 2>&1 | tail -40 || true
+
+  # A person runs the installer by hand: questions are answered on the terminal, not in the environment.
+  prompts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Answers typed on a terminal
+        run: |
+          cd scripts && python3 -m unittest test_installation.TerminalPromptTests test_frontend.FrontendTests.test_a_question_reads_the_answer_from_a_terminal && cd ..
+          export WDTT_SELECTION_DIR=$(mktemp -d)
+          printf '1,dnstt\n\n3\n' | script -qec 'python3 scripts/local-install.py choose && python3 scripts/frontend.py choose' /dev/null
+          python3 - <<'PY'
+          import json, os
+          d = os.environ['WDTT_SELECTION_DIR']
+          assert json.load(open(d + '/install-selection.json'))['protocols'] == ['wdtt', 'dnstt']
+          assert json.load(open(d + '/frontend-selection.json'))['mode'] == 'local'
+          PY

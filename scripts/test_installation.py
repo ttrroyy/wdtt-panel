@@ -18,6 +18,7 @@ def load(name, file):
 
 
 uninstall = load('uninstall', 'uninstall.py')
+local_install = load('local_install', 'local-install.py')
 
 
 def old_locations(*_):
@@ -91,6 +92,18 @@ class InstallationTests(unittest.TestCase):
         result = uninstall.remove_locations(text)
         self.assertIn('location /other',result)
         self.assertNotIn('/wdtt/',result)
+
+
+class TerminalPromptTests(unittest.TestCase):
+    def test_a_question_reads_the_answer_from_a_terminal(self):
+        # A run with no answer in the environment asks on /dev/tty, which is not seekable.
+        import os
+        import terminal_stub
+        patcher, rout, fds = terminal_stub.answering('1,dnstt\n')
+        with patcher:
+            self.assertEqual(local_install.ask('Протоколы', 'all'), '1,dnstt')
+        for fd in fds: os.close(fd)
+        self.assertIn('Протоколы [all]: ', os.read(rout, 4096).decode()); os.close(rout)
 
 
 if __name__ == '__main__': unittest.main()

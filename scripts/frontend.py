@@ -26,10 +26,12 @@ def read_state():return json.loads(STATE.read_text()) if STATE.exists() else {}
 # A check writes its choices elsewhere, so it changes nothing in /etc/wdtt.
 SELECTION=Path(os.environ.get('WDTT_SELECTION_DIR') or BASE)
 def ask(label,default=''):
-    try:tty=open('/dev/tty','r+')
+    # A terminal is not seekable, so Python refuses to open it 'r+': read and write it apart.
+    try:reader,writer=open('/dev/tty'),open('/dev/tty','w')
     except OSError:raise ValueError('Нет терминала для вопроса «'+label+'»: задайте ответ переменной окружения') from None
-    with tty:
-        tty.write(label+(' ['+default+']' if default else '')+': ');tty.flush();return tty.readline().strip() or default
+    with reader,writer:
+        writer.write(label+(' ['+default+']' if default else '')+': ');writer.flush()
+        return reader.readline().strip() or default
 def domain(value):
     value=value.strip().lower().rstrip('.')
     if len(value)>253 or '.' not in value or not all(re.fullmatch(r'(?!-)[a-z0-9-]{1,63}(?<!-)',v) for v in value.split('.')):raise ValueError('Укажите домен без схемы, порта и пути')

@@ -35,11 +35,12 @@ def select_protocols(value):
 
 
 def ask(label,default=''):
-    try:terminal=open('/dev/tty','r+')
+    # A terminal is not seekable, so Python refuses to open it 'r+': read and write it apart.
+    try:reader,writer=open('/dev/tty'),open('/dev/tty','w')
     except OSError:raise ValueError('Нет терминала для вопроса «'+label+'»: задайте ответ переменной окружения') from None
-    with terminal:
-        terminal.write(label+(' ['+default+']' if default else '')+': ');terminal.flush()
-        return terminal.readline().strip() or default
+    with reader,writer:
+        writer.write(label+(' ['+default+']' if default else '')+': ');writer.flush()
+        return reader.readline().strip() or default
 
 
 def choose():
