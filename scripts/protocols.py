@@ -462,7 +462,9 @@ def display_users(name):
         row['enabled']=not row.get('is_deactivated',False) and row.get('active',True) and row.get('status','active')=='active' and not (row.get('expires_at',0) and row['expires_at']<=time.time())
         if name=='qwdtt':
             row['link']='qwdtt://config?'+urllib.parse.urlencode({'name':row['name'],'peer':f'{cfg["host"]}:{port}','pass':password,
-                                                              'hashes':row.get('vk_hash',''),'workers':9,'port':cfg['client_port']})
+                                                              'hashes':row.get('vk_hash',''),'workers':9,'port':cfg['client_port'],
+                                                              'raw':row.get('raw_port') or cfg['raw_port'],'direct':row.get('direct_port') or cfg['direct_port'],
+                                                              **({'dk':row['diag_key']} if row.get('diag_key') else {})})
         elif name=='wdtt-plus':
             row['link']=f'wdtt://{cfg["host"]}:{port}:{cfg["wg_port"]}:{cfg["client_port"]}:{password}:{row.get("vk_hash","")}'
         elif name in ('csqtt-2.5.0','csqtt-2.5.3-community'):

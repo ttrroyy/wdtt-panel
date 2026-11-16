@@ -40,6 +40,18 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(ValueError):p.api({'op':'create','protocol':'../../ssh'})
             command.assert_not_called()
 
+    def test_qwdtt_145_share_link_keeps_diagnostics_and_custom_ports(self):
+        key='A'*43
+        entry=dict(password='p+& word',vk_hash='first,second,third,fourth,fifth,sixth',diag_key=key,raw_port=57103,direct_port=57102)
+        with patch.object(p,'users',return_value=[entry]), patch.object(p,'settings',return_value={'host':'vpn.example','secret':'owner'}):
+            row=p.display_users('qwdtt')[0]
+        query=p.urllib.parse.parse_qs(p.urllib.parse.urlsplit(row['link']).query)
+        self.assertEqual(query['pass'],['p+& word'])
+        self.assertEqual(query['dk'],[key])
+        self.assertEqual(query['raw'],['57103'])
+        self.assertEqual(query['direct'],['57102'])
+        self.assertEqual(len(query['hashes'][0].split(',')),6)
+
     def test_only_one_instance_of_each_protocol(self):
         with p.locked():
             s=p.state();s['profiles']['qwdtt']=True;p.save(s)
