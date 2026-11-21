@@ -14,6 +14,7 @@ on:
       - backends/soar/**
       - .github/workflows/cores.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: write
@@ -40,7 +41,7 @@ jobs:
         run: |
           tag="cores-$(python3 scripts/cores.py fingerprint)"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if gh release view "$tag" --json assets -q '.assets[].name' 2>/dev/null | grep -qx "wdtt-cores-linux-${{ matrix.arch }}.tar.gz"; then
+          if [ "$GITHUB_REF_TYPE" != tag ] && gh release view "$tag" --json assets -q '.assets[].name' 2>/dev/null | grep -qx "wdtt-cores-linux-${{ matrix.arch }}.tar.gz"; then
             echo "built=1" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.release.outputs.built != '1'
@@ -73,6 +74,7 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
 
   release:
+    if: github.ref_type != 'tag'
     needs: build
     runs-on: ubuntu-latest
     steps:

@@ -93,17 +93,29 @@ class ProtocolTests(unittest.TestCase):
             state['bundles']={'identity':{'members':members}};p.save(state)
         rows={name:[dict(password=password,enabled=True,name='Person',link='link',up_bytes=0,down_bytes=0)] for name,password in members.items()}
         with patch.object(p,'native_users',return_value=[master]), patch.object(p,'selected_protocols',return_value=list(members)), patch.object(p,'mutate_user'), patch.object(p,'enabled_user') as toggle:
-            options,errors=p.sync_subscription_bundles(rows)
+            options,errors=p.sync_subscription_bundles(rows,set(rows))
             self.assertEqual(errors,[])
             self.assertEqual(options,[{'tag':'vpn-user-identity','label':'Person'}])
             aliases=json.loads((p.ROOT/'user-route-aliases.json').read_text())
             self.assertEqual(set(aliases['vpn-user-identity']),{'vpn-'+n+'-user-'+p.user_id(n,pw) for n,pw in members.items()})
             toggle.assert_not_called()
         with patch.object(p,'native_users',return_value=[master]), patch.object(p,'selected_protocols',return_value=['freeturn']), patch.object(p,'mutate_user'), patch.object(p,'enabled_user') as toggle:
-            p.sync_subscription_bundles(rows)
+            p.sync_subscription_bundles(rows,set(rows))
             toggle.assert_called_once_with('qwdtt','q-password',False)
             subscription=json.loads((p.ROOT.parent/'protocol-subscriptions.json').read_text())['identity']
             self.assertEqual([c['protocol'] for c in subscription['connections']],['freeturn'])
+
+        rows['qwdtt']=[]
+        recovered=dict(password='new-password',enabled=True,link='qwdtt://new',up_bytes=0,down_bytes=0)
+        with patch.object(p,'native_users',return_value=[master]), patch.object(p,'selected_protocols',return_value=list(members)), patch.object(p,'mutate_user'), patch.object(p,'enabled_user'), patch.object(p,'create_user',return_value=recovered) as create, patch.object(p,'display_users',return_value=[recovered]):
+            # Cached rows from an unavailable backend do not justify issuing replacement credentials.
+            p.sync_subscription_bundles(rows,{'freeturn'})
+            create.assert_not_called()
+            _,errors=p.sync_subscription_bundles(rows,set(rows))
+            self.assertEqual(errors,[])
+            create.assert_called_once()
+            subscription=json.loads((p.ROOT.parent/'protocol-subscriptions.json').read_text())['identity']
+            self.assertEqual([c['protocol'] for c in subscription['connections']],['qwdtt','freeturn'])
 
     def test_freeturn_uri_fixes_mode_and_embeds_original_wg_field(self):
         folder=p.directory('freeturn');folder.mkdir(parents=True);(folder/'wg-public').write_text('server-public')

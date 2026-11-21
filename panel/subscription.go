@@ -284,10 +284,9 @@ func (a *App) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	inbound, _ := loadWdttInbound()
 	linkHost := a.resolveLinkHost(inbound)
 	subURL := a.buildSubURL(info.Entry.SubID)
-	link, err := buildWdttShareLink(linkHost, info.Password, info.Email, a.cfg.SubTitle, "", info.Entry.VkHash, info.Entry, inbound, subURL)
-	if err != nil {
-		http.Error(w, "failed to build link", http.StatusInternalServerError)
-		return
+	link := ""
+	if inbound.Enable && userHasProtocol(subID, "wdtt") {
+		link, err = buildWdttShareLink(linkHost, info.Password, info.Email, a.cfg.SubTitle, "", info.Entry.VkHash, info.Entry, inbound, subURL)
 	}
 	expireSec := int64(0)
 	bundle, bundled := loadProtocolSubscription(subID)
@@ -296,15 +295,26 @@ func (a *App) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		info.Entry.DownBytes += bundle.DownBytes
 	}
 	bundleLinks, bundleTitles := []string{}, []string{}
+	if link != "" {
+		bundleLinks = append(bundleLinks, link)
+		bundleTitles = append(bundleTitles, "WDTT")
+	}
 	if bundled {
-		if inbound.Enable && userHasProtocol(info.Entry.SubID, "wdtt") {
-			bundleLinks = append(bundleLinks, link)
-			bundleTitles = append(bundleTitles, "WDTT")
-		}
 		for _, connection := range bundle.Connections {
+			if strings.TrimSpace(connection.Link) == "" || !userHasProtocol(subID, connection.Protocol) {
+				continue
+			}
 			bundleLinks = append(bundleLinks, connection.Link)
 			bundleTitles = append(bundleTitles, connection.Title)
 		}
+	}
+	if len(bundleLinks) == 0 {
+		if err != nil {
+			http.Error(w, "failed to build link", http.StatusInternalServerError)
+		} else {
+			http.Error(w, "subscription links unavailable", http.StatusServiceUnavailable)
+		}
+		return
 	}
 	if info.Entry.ExpiresAt > 0 {
 		expireSec = info.Entry.ExpiresAt
@@ -313,13 +323,11 @@ func (a *App) handleSubscription(w http.ResponseWriter, r *http.Request) {
 		info.Entry.UpBytes, info.Entry.DownBytes, info.Entry.TotalBytes, expireSec)
 
 	if subscriptionWantsHTML(r) {
-		pageLinks, linkTitles, err := buildAllSubscriptionLinks(linkHost, info.Password, info.Email, a.cfg.SubTitle, info.Entry, inbound, subURL)
-		if err != nil || len(pageLinks) == 0 {
-			pageLinks = []string{link}
-			linkTitles = []string{"WDTT JSON"}
-		}
-		if bundled {
-			pageLinks, linkTitles = bundleLinks, bundleTitles
+		pageLinks, linkTitles := bundleLinks, bundleTitles
+		if !bundled && link != "" {
+			if links, titles, err := buildAllSubscriptionLinks(linkHost, info.Password, info.Email, a.cfg.SubTitle, info.Entry, inbound, subURL); err == nil && len(links) > 0 {
+				pageLinks, linkTitles = links, titles
+			}
 		}
 		a.serveSubInfoPage(w, r, subID, info, pageLinks, linkTitles)
 		return
@@ -327,10 +335,7 @@ func (a *App) handleSubscription(w http.ResponseWriter, r *http.Request) {
 
 	a.applySubHeaders(w, header)
 
-	body := link
-	if bundled {
-		body = strings.Join(bundleLinks, "\n")
-	}
+	body := strings.Join(bundleLinks, "\n")
 	if a.cfg.SubEncrypt {
 		body = base64.StdEncoding.EncodeToString([]byte(body))
 	}

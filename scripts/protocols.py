@@ -841,7 +841,7 @@ def save_bundle(sub_id,bundle):
         current['bundles'][sub_id]=bundle;save(current)
 
 
-def sync_subscription_bundles(rows_by_profile):
+def sync_subscription_bundles(rows_by_profile, refreshed_profiles):
     with locked():
         current=state();bundles=dict(current.get('bundles',{}))
         active_profiles={name:present and not current.get('disabled',{}).get(name,False) for name,present in current['profiles'].items()}
@@ -870,9 +870,10 @@ def sync_subscription_bundles(rows_by_profile):
             password=bundle['members'].get(name)
             row=next((item for item in rows_by_profile.get(name,[]) if item['password']==password),None) if password else None
             try:
-                if name in selected and active_profiles.get(name) and not password:
+                if name in selected and active_profiles.get(name) and row is None and name in refreshed_profiles:
                     created=create_user(name,{'name':master['comment'] or 'Пользователь','vk_hash':master['vk_hash'],'days':0,'max_devices':master['max_devices'] or 1})
                     password=created['password'];bundle['members'][name]=password
+                    bundle.get('signatures',{}).pop(name,None)
                     # Save immediately: a failed following backend must not duplicate this credential.
                     save_bundle(sub_id,bundle)
                     row=next(x for x in display_users(name) if x['password']==password)
@@ -1023,7 +1024,7 @@ def reconcile():
     PROFILES.update(edge.catalog(ROOT))
     try:edge.counters()
     except Exception as error:print('edge stats: '+str(error),file=sys.stderr,flush=True)
-    rows_by_profile={}; errors=[]
+    rows_by_profile={}; refreshed_profiles=set(); errors=[]
     with locked():
         current=state();enabled=dict(current['profiles']);disabled=dict(current.get('disabled',{}))
     for name,present in enabled.items():
@@ -1034,6 +1035,7 @@ def reconcile():
             continue
         try:
             rows=display_users(name); rows_by_profile[name]=rows
+            refreshed_profiles.add(name)
             atomic(directory(name)/'last-users.json', rows)
             if edge.is_edge(name):
                 for row in rows:
@@ -1059,7 +1061,7 @@ def reconcile():
             cache=directory(name)/'last-users.json'
             rows_by_profile.setdefault(name,json.loads(cache.read_text()) if cache.exists() else [])
     adopt_legacy_users(rows_by_profile)
-    user_options,user_errors=sync_subscription_bundles(rows_by_profile)
+    user_options,user_errors=sync_subscription_bundles(rows_by_profile,refreshed_profiles)
     errors.extend(user_errors)
     options=[{'tag':'vpn-'+name,'label':spec(name)['name']} for name in rows_by_profile]
     atomic(ROOT/'route-options.json',options+user_options)

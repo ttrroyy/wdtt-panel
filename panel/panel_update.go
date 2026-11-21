@@ -1,29 +1,38 @@
 package panel
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
-const defaultWdttGithubUser = "ildarmaga"
+const wdttGitHubRepository = "ttrroyy/wdtt-panel"
+
+var wdttReleaseTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+var panelUpdateLock sync.Mutex
 
 type wdttGitHubRelease struct {
-	TagName string `json:"tag_name"`
-}
-
-func wdttGithubUser() string {
-	if u := strings.TrimSpace(os.Getenv("WDTT_GITHUB_USER")); u != "" {
-		return u
-	}
-	return defaultWdttGithubUser
+	TagName    string `json:"tag_name"`
+	Draft      bool   `json:"draft"`
+	Prerelease bool   `json:"prerelease"`
+	Assets     []struct {
+		Name string `json:"name"`
+	} `json:"assets"`
 }
 
 func panelReleaseBinName() string {
@@ -56,7 +65,7 @@ func panelInstallPath() string {
 
 func fetchWdttPanelReleases() ([]string, error) {
 	client := &http.Client{Timeout: 20 * time.Second}
-	url := fmt.Sprintf("https://api.github.com/repos/%s/wdtt/releases?per_page=20", wdttGithubUser())
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=20", wdttGitHubRepository)
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
@@ -75,55 +84,181 @@ func fetchWdttPanelReleases() ([]string, error) {
 	}
 	tags := make([]string, 0, len(releases))
 	for _, rel := range releases {
-		if rel.TagName != "" {
-			tags = append(tags, rel.TagName)
+		if rel.Draft || rel.Prerelease || !wdttReleaseTag.MatchString(rel.TagName) {
+			continue
+		}
+		for _, asset := range rel.Assets {
+			if asset.Name == panelReleaseBinName()+".sha256" {
+				tags = append(tags, rel.TagName)
+				break
+			}
 		}
 	}
 	return filterReleaseTagsSinceDB(tags), nil
 }
 
 func installPanelVersion(tag string) error {
+	panelUpdateLock.Lock()
+	defer panelUpdateLock.Unlock()
 	tag = strings.TrimSpace(tag)
-	if tag == "" {
-		return fmt.Errorf("версия не указана")
+	if !wdttReleaseTag.MatchString(tag) {
+		return fmt.Errorf("некорректная версия панели")
 	}
 	binName := panelReleaseBinName()
-	url := fmt.Sprintf("https://github.com/%s/wdtt/releases/download/%s/%s", wdttGithubUser(), tag, binName)
+	url := fmt.Sprintf("https://github.com/%s/releases/download/%s/", wdttGitHubRepository, tag)
 	dest := panelInstallPath()
-	tmp := filepath.Join(os.TempDir(), binName+".download")
-	if err := downloadFile(url, tmp); err != nil {
+	dir, err := os.MkdirTemp(filepath.Dir(dest), ".wdtt-update-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	tmp := filepath.Join(dir, binName)
+	if err := downloadPanelAsset(url, tmp); err != nil {
 		return fmt.Errorf("скачивание %s: %w", tag, err)
 	}
-	defer os.Remove(tmp)
 	if err := os.Chmod(tmp, 0755); err != nil {
 		return err
 	}
-	backup := dest + ".bak." + fmt.Sprintf("%d", time.Now().Unix())
+	nonce := filepath.Base(dir)
+	backup := dest + ".bak." + nonce
 	if _, err := os.Stat(dest); err == nil {
-		_ = os.Rename(dest, backup)
+		if err := os.Link(dest, backup); err != nil {
+			return fmt.Errorf("резервная копия панели: %w", err)
+		}
+	}
+	restoreCores, err := updatePanelCores(url, nonce)
+	if err != nil {
+		return fmt.Errorf("обновление ядер: %w", err)
 	}
 	if err := os.Rename(tmp, dest); err != nil {
-		in, err := os.Open(tmp)
-		if err != nil {
-			return err
+		if restoreCores != nil {
+			err = errors.Join(err, restoreCores())
 		}
-		defer in.Close()
-		out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-		if err != nil {
-			return err
-		}
-		if _, err := out.ReadFrom(in); err != nil {
-			out.Close()
-			return err
-		}
-		out.Close()
+		return err
 	}
 	log.Printf("[PANEL] updated to %s (%s)", tag, dest)
 	go func() {
 		time.Sleep(800 * time.Millisecond)
+		if restoreCores != nil {
+			if err := exec.Command("systemctl", "try-restart", "wdtt-protocol@*.service", "wdtt-edge@*.service").Run(); err != nil {
+				log.Printf("[PANEL] restart updated protocol services: %v", err)
+			}
+		}
 		if err := restartPanelService(); err != nil {
 			log.Printf("[PANEL] self-restart after update: %v", err)
 		}
 	}()
+	return nil
+}
+
+func downloadPanelAsset(baseURL, path string) error {
+	name := filepath.Base(path)
+	if err := downloadFile(baseURL+name+".sha256", path+".sha256"); err != nil {
+		return err
+	}
+	if err := downloadFile(baseURL+name, path); err != nil {
+		return err
+	}
+	digest, err := os.ReadFile(path + ".sha256")
+	if err != nil {
+		return err
+	}
+	binary, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	hash := sha256.New()
+	_, err = io.Copy(hash, binary)
+	binary.Close()
+	if err != nil {
+		return err
+	}
+	if fields := strings.Fields(string(digest)); len(fields) != 2 || fields[1] != name || fields[0] != hex.EncodeToString(hash.Sum(nil)) {
+		return fmt.Errorf("контрольная сумма %s не совпадает", name)
+	}
+	return nil
+}
+
+func updatePanelCores(url, nonce string) (func() error, error) {
+	const dest = "/usr/local/lib/wdtt/protocols"
+	role, err := os.ReadFile("/etc/wdtt/role")
+	if err != nil || strings.TrimSpace(string(role)) == "panel" {
+		return nil, nil
+	}
+	arch := "x86_64"
+	if runtime.GOARCH == "arm64" {
+		arch = "aarch64"
+	}
+	staging, err := os.MkdirTemp(filepath.Dir(dest), ".wdtt-cores-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(staging)
+	archive := filepath.Join(staging, "wdtt-cores-linux-"+arch+".tar.gz")
+	if err := downloadPanelAsset(url, archive); err != nil {
+		return nil, err
+	}
+	next := filepath.Join(staging, "cores")
+	if err := unpackPanelCores(archive, next); err != nil {
+		return nil, err
+	}
+	previous := dest + ".bak." + nonce
+	if err := os.Rename(dest, previous); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(next, dest); err != nil {
+		return nil, errors.Join(err, os.Rename(previous, dest))
+	}
+	return func() error {
+		if err := os.Rename(dest, dest+".failed."+nonce); err != nil {
+			return err
+		}
+		return os.Rename(previous, dest)
+	}, nil
+}
+
+func unpackPanelCores(archive, dest string) error {
+	file, err := os.Open(archive)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	compressed, err := gzip.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer compressed.Close()
+	input := tar.NewReader(compressed)
+	for {
+		entry, err := input.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if entry.Typeflag != tar.TypeReg || !filepath.IsLocal(entry.Name) {
+			return fmt.Errorf("недопустимая запись архива ядер: %q", entry.Name)
+		}
+		path := filepath.Join(dest, entry.Name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return err
+		}
+		out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, os.FileMode(entry.Mode)&0755)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(out, input)
+		if err := errors.Join(copyErr, out.Close()); err != nil {
+			return err
+		}
+	}
+	// A partially published archive cannot replace the installed set.
+	for _, name := range []string{"qwdtt", "wdtt-plus", "freeturn", "csqtt-2.1.9", "csqtt-2.5.0", "csqtt-2.5.3-community",
+		"dnstt", "vaydns", "slipstream", "masterdns", "cottendns", "soar", "soar-native", "openflux"} {
+		if info, err := os.Stat(filepath.Join(dest, name)); err != nil || info.Mode().Perm()&0111 == 0 || info.Size() == 0 {
+			return fmt.Errorf("в архиве отсутствует исполняемый файл %s", name)
+		}
+	}
 	return nil
 }
