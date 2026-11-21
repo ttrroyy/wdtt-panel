@@ -39,6 +39,14 @@ class FleetTests(unittest.TestCase):
         self.assertNotIn('server_key',public)
         self.assertNotIn('client_key',public)
 
+    def test_heartbeat_uses_controller_clock_and_rejects_a_different_node(self):
+        node=dict(machine_id='expected')
+        snapshot=dict(role='node',machine_id='expected',controller_seen_at=1)
+        with patch.object(fleet,'remote',return_value=snapshot),patch.object(fleet.time,'time',return_value=42):
+            self.assertEqual(fleet.verified_snapshot(node)['controller_seen_at'],42)
+            snapshot['machine_id']='another'
+            with self.assertRaises(ValueError):fleet.verified_snapshot(node)
+
     def test_loopback_and_plain_http_api_urls_are_rejected_before_connecting(self):
         with patch.object(fleet,'remote') as remote:
             for url in ('http://node.example','https://user:pass@node.example','https://node.example/path','https://node.example?token=abc'):

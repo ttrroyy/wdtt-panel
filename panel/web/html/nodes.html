@@ -9,7 +9,7 @@
    <a-button type="primary" icon="plus" @click="visible=true" style="margin-bottom:16px">Добавить ноду</a-button>
    <div v-if="!nodes.length" class="fleet-empty">Подключите VPS, которая будет обслуживать инбаунды и пользователей.</div>
    <div class="fleet-list"><div v-for="node in nodes" :key="node.id" class="fleet-row">
-    <div class="fleet-row-main"><strong>[[ node.name ]]</strong><div class="fleet-muted">[[ node.address ]]<span v-if="node.id!=='local'"> · SSH [[ node.ssh_port ]]</span></div><div class="fleet-muted" v-if="node.fingerprint">[[ node.fingerprint ]]</div><div v-if="node.error" role="alert" style="color:var(--danger-color);overflow-wrap:anywhere">[[ node.error ]]</div></div>
+    <div class="fleet-row-main"><strong>[[ node.name ]]</strong><div class="fleet-muted">[[ node.address ]]<span v-if="node.id!=='local'"> · SSH [[ node.ssh_port ]]</span></div><div class="fleet-muted" v-if="node.fingerprint">[[ node.fingerprint ]]</div><div v-if="node.last_seen_at" class="fleet-muted">Последний ответ [[ new Date(node.last_seen_at*1000).toLocaleString() ]]</div><div v-if="node.error" role="alert" style="color:var(--danger-color);overflow-wrap:anywhere">[[ node.error ]]</div></div>
     <div class="fleet-actions"><a-tag>[[ node.status==='ready'?(node.error?'Недоступна':'Подключена'):node.status==='installing'?'Устанавливается':'Подключение' ]]</a-tag><a-button v-if="node.status==='ready'" icon="api" @click="openNode(node)">Инбаунды</a-button><a-popconfirm v-if="node.id!=='local'" title="Отвязать ноду? Её службы продолжат работать на VPS." ok-text="Отвязать" cancel-text="Отмена" @confirm="remove(node)"><a-button icon="disconnect" aria-label="Отвязать ноду"></a-button></a-popconfirm></div>
    </div></div>
   </a-card>

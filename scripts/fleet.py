@@ -281,7 +281,7 @@ def api(payload):
             profiles=local_api({'op':'list'}) if n['id']=='local' else snapshots.get(n['id'],{}).get('profiles',[])
             for p in profiles:
                 if p.get('present'):sources.append(dict(node_id=n['id'],tag='vpn-'+p['id'],label=n['name']+' · '+p['name']))
-        return dict(nodes=[public_node(n) for n in s['nodes']],role=role(),sources=sources)
+        return dict(nodes=[dict(public_node(n),last_seen_at=snapshots.get(n['id'],{}).get('controller_seen_at',0)) for n in s['nodes']],role=role(),sources=sources)
     node=next((n for n in s['nodes'] if n['id']==payload.get('node_id')),None)
     if not node:raise ValueError('Нода не найдена')
     if op in ('inbound','inbound-save'):return remote(node,dict(op=op,request=payload.get('request',{})))
@@ -323,6 +323,12 @@ def sync_routing(node):
     config=node_routing(json.loads(row[0]),node['id']);path=node_directory(node)/'routing.json'
     if read(path)!=config:remote(node,dict(op='routing',config=config));atomic(path,config)
 
+def verified_snapshot(node):
+    snap=remote(node,{'op':'state'})
+    if snap.get('role')!='node' or snap.get('machine_id')!=node['machine_id']:
+        raise ValueError('Ответ получен от другой ноды или от панели с неверной ролью')
+    return dict(snap,controller_seen_at=int(time.time()))
+
 def reconcile():
     s=state();users=export_users();snapshots=read(ROOT/'snapshots.json',{})
     for node in s['nodes']:
@@ -330,8 +336,7 @@ def reconcile():
         if node['id']=='local':continue
         try:
             if node['status']=='installing':
-                snap=remote(node,{'op':'state'})
-                if snap['role']!='node':raise ValueError('Установлена неверная роль')
+                snap=verified_snapshot(node)
                 with locked():adopt_users(node,snap)
                 node['status']='ready'
             if node['status']!='ready':continue
@@ -341,7 +346,7 @@ def reconcile():
             if not signature_path.exists() or signature_path.read_text()!=signature:
                 remote(node,dict(op='sync-users',users=users,node_id=node['id']));signature_path.write_text(signature)
             sync_routing(node)
-            snapshots[node['id']]=remote(node,{'op':'state'});node.pop('error',None)
+            snapshots[node['id']]=verified_snapshot(node);node.pop('error',None)
         except Exception as error:node['error']=str(error);node['retry_after']=int(time.time())+30
         with locked():
             current=state()
