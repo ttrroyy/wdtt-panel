@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-var VPNProtocols = []string{"wdtt", "qwdtt", "wdtt-plus", "csqtt-2.1.9", "csqtt-2.5.0", "freeturn", "csqtt-2.5.3-community"}
+var VPNProtocols = []string{"wdtt", "qwdtt", "wdtt-plus", "csqtt-2.1.9", "csqtt-2.5.0", "freeturn", "csqtt-2.5.3-community", "mrtt"}
 
 func ValidateProtocols(protocols []string) error {
 	allowedProtocols := append([]string{}, VPNProtocols...)

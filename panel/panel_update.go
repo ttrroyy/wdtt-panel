@@ -87,11 +87,12 @@ func fetchWdttPanelReleases() ([]string, error) {
 		if rel.Draft || rel.Prerelease || !wdttReleaseTag.MatchString(rel.TagName) {
 			continue
 		}
+		assets := make(map[string]bool, len(rel.Assets))
 		for _, asset := range rel.Assets {
-			if asset.Name == panelReleaseBinName()+".sha256" {
-				tags = append(tags, rel.TagName)
-				break
-			}
+			assets[asset.Name] = true
+		}
+		if assets[panelReleaseBinName()+".sha256"] && assets["wdtt-runtime.tar.gz.sha256"] {
+			tags = append(tags, rel.TagName)
 		}
 	}
 	return filterReleaseTagsSinceDB(tags), nil
@@ -130,19 +131,30 @@ func installPanelVersion(tag string) error {
 	if err != nil {
 		return fmt.Errorf("обновление ядер: %w", err)
 	}
+	restoreRuntime, cleanupRuntime, err := updatePanelRuntime(url)
+	if err != nil {
+		if restoreCores != nil {
+			err = errors.Join(err, restoreCores())
+		}
+		return fmt.Errorf("обновление файлов управления: %w", err)
+	}
 	if err := os.Rename(tmp, dest); err != nil {
+		if restoreErr := restoreRuntime(); restoreErr != nil {
+			err = errors.Join(err, restoreErr)
+		} else {
+			cleanupRuntime()
+		}
 		if restoreCores != nil {
 			err = errors.Join(err, restoreCores())
 		}
 		return err
 	}
+	cleanupRuntime()
 	log.Printf("[PANEL] updated to %s (%s)", tag, dest)
 	go func() {
 		time.Sleep(800 * time.Millisecond)
-		if restoreCores != nil {
-			if err := exec.Command("systemctl", "try-restart", "wdtt-protocol@*.service", "wdtt-edge@*.service").Run(); err != nil {
-				log.Printf("[PANEL] restart updated protocol services: %v", err)
-			}
+		if err := exec.Command("systemctl", "try-restart", "wdtt-protocol@*.service", "wdtt-edge@*.service", "wdtt-protocol-watch.service", "wdtt-fleet.service").Run(); err != nil {
+			log.Printf("[PANEL] restart updated services: %v", err)
 		}
 		if err := restartPanelService(); err != nil {
 			log.Printf("[PANEL] self-restart after update: %v", err)
@@ -218,6 +230,20 @@ func updatePanelCores(url, nonce string) (func() error, error) {
 }
 
 func unpackPanelCores(archive, dest string) error {
+	if err := extractPanelArchive(archive, dest); err != nil {
+		return err
+	}
+	// A partially published archive cannot replace the installed set.
+	for _, name := range []string{"qwdtt", "wdtt-plus", "freeturn", "csqtt-2.1.9", "csqtt-2.5.0", "csqtt-2.5.3-community", "mrtt",
+		"dnstt", "vaydns", "slipstream", "masterdns", "cottendns", "soar", "soar-native", "openflux"} {
+		if info, err := os.Stat(filepath.Join(dest, name)); err != nil || info.Mode().Perm()&0111 == 0 || info.Size() == 0 {
+			return fmt.Errorf("в архиве отсутствует исполняемый файл %s", name)
+		}
+	}
+	return nil
+}
+
+func extractPanelArchive(archive, dest string) error {
 	file, err := os.Open(archive)
 	if err != nil {
 		return err
@@ -253,12 +279,73 @@ func unpackPanelCores(archive, dest string) error {
 			return err
 		}
 	}
-	// A partially published archive cannot replace the installed set.
-	for _, name := range []string{"qwdtt", "wdtt-plus", "freeturn", "csqtt-2.1.9", "csqtt-2.5.0", "csqtt-2.5.3-community",
-		"dnstt", "vaydns", "slipstream", "masterdns", "cottendns", "soar", "soar-native", "openflux"} {
-		if info, err := os.Stat(filepath.Join(dest, name)); err != nil || info.Mode().Perm()&0111 == 0 || info.Size() == 0 {
-			return fmt.Errorf("в архиве отсутствует исполняемый файл %s", name)
-		}
-	}
 	return nil
+}
+
+func updatePanelRuntime(url string) (restore func() error, cleanup func(), err error) {
+	const dest = "/usr/local/lib/wdtt"
+	staging, err := os.MkdirTemp(dest, ".wdtt-runtime-")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup = func() { _ = os.RemoveAll(staging) }
+	retainBackup := false
+	defer func() {
+		if err != nil && !retainBackup {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+	archive := filepath.Join(staging, "wdtt-runtime.tar.gz")
+	if err := downloadPanelAsset(url, archive); err != nil {
+		return nil, nil, err
+	}
+	next := filepath.Join(staging, "next")
+	if err := extractPanelArchive(archive, next); err != nil {
+		return nil, nil, err
+	}
+	restore, err = replacePanelRuntime(next, dest)
+	if err != nil {
+		retainBackup = true
+		return nil, nil, fmt.Errorf("%w (%s)", err, staging)
+	}
+	return restore, cleanup, nil
+}
+
+func replacePanelRuntime(source, dest string) (func() error, error) {
+	names := []string{"protocols.py", "edge_protocols.py", "fleet.py", "frontend.py", "preflight.py", "uninstall.py", "panel-firewall.py", "node-source.tar.gz"}
+	backup := filepath.Join(filepath.Dir(source), "previous")
+	if err := os.Mkdir(backup, 0700); err != nil {
+		return nil, err
+	}
+	hadFile := make(map[string]bool, len(names))
+	for _, name := range names {
+		info, err := os.Stat(filepath.Join(source, name))
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			return nil, fmt.Errorf("в архиве отсутствует %s", name)
+		}
+		err = os.Link(filepath.Join(dest, name), filepath.Join(backup, name))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		hadFile[name] = err == nil
+	}
+	var installed []string
+	restore := func() error {
+		var result error
+		for _, name := range installed {
+			if hadFile[name] {
+				result = errors.Join(result, os.Rename(filepath.Join(backup, name), filepath.Join(dest, name)))
+			} else {
+				result = errors.Join(result, os.Remove(filepath.Join(dest, name)))
+			}
+		}
+		return result
+	}
+	for _, name := range names {
+		if err := os.Rename(filepath.Join(source, name), filepath.Join(dest, name)); err != nil {
+			return nil, errors.Join(err, restore())
+		}
+		installed = append(installed, name)
+	}
+	return restore, nil
 }

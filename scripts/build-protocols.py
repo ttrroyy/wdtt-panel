@@ -29,6 +29,13 @@ def patch(root, name, pool):
     if name == 'freeturn':
         replace(root/'cmd/server/main.go', 'd.StartHotReload(ctx, 10*time.Second)', 'd.StartHotReload(ctx, time.Second)')
         return
+    if name == 'mrtt':
+        for path in (root/'rust-server').glob('*.rs'):
+            text = path.read_text(encoding='utf-8')
+            text = text.replace('10.66.67.', f'10.{pool}.67.')
+            text = text.replace('[10, 66, 67', f'[10, {pool}, 67').replace('new(10, 66, 67', f'new(10, {pool}, 67')
+            path.write_text(text, encoding='utf-8')
+        return
     folder = root / ('rust-server' if name.startswith('csqtt') else 'server' if name == 'qwdtt' else '.')
     suffix = '*.rs' if name.startswith('csqtt') else '*.go'
     for p in folder.glob(suffix):
@@ -146,10 +153,11 @@ def build(name, destination, cache):
     os.close(fd)
     staged = Path(filename)
     env = dict(os.environ, CGO_ENABLED='0', GOTOOLCHAIN='auto', CARGO_BUILD_JOBS='1')
-    if name.startswith('csqtt'):
+    if name.startswith('csqtt') or name == 'mrtt':
         target={'x86_64':'x86_64-unknown-linux-gnu','aarch64':'aarch64-unknown-linux-gnu'}[platform.machine()]
         subprocess.run(['cargo', '+1.97.1', 'build', '--release', '--locked', '--target', target, '--manifest-path', str(root/'rust-server/Cargo.toml')], cwd=root/'rust-server', env=env, check=True)
-        shutil.copy2(root/f'rust-server/target/{target}/release/csqtt', staged)
+        executable = 'mrtt' if name == 'mrtt' else 'csqtt'
+        shutil.copy2(root/f'rust-server/target/{target}/release/{executable}', staged)
     else:
         package = './server' if name == 'qwdtt' else './cmd/server' if name == 'freeturn' else '.'
         subprocess.run(['go', 'build', '-trimpath', '-o', str(staged.resolve()), package], cwd=root, env=env, check=True)

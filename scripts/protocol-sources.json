@@ -24,6 +24,11 @@
     "revision": "11f81346cb398b157975107872aad5d6a4143149",
     "pool": 72
   },
+  "mrtt": {
+    "repo": "ttrroyy/MRTT",
+    "revision": "17259c200887262fd531b8c2790920f49e1178d2",
+    "pool": 75
+  },
   "csqtt-2.5.3-community": {
     "repo": "Afteroid/csqttr",
     "revision": "84a2ce84dd4ac0716ceabd1b9a9ae455e6e86806",

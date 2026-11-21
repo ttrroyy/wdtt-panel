@@ -111,10 +111,10 @@ if [[ ! -x /root/.cargo/bin/rustup ]]; then
 fi
 /root/.cargo/bin/rustup toolchain install 1.97.1 --profile minimal
 step "Сборка ядер протоколов"
-for protocol in qwdtt wdtt-plus csqtt-2.1.9 csqtt-2.5.0 freeturn csqtt-2.5.3-community dnstt vaydns slipstream masterdns cottendns soar openflux; do
+for protocol in qwdtt wdtt-plus csqtt-2.1.9 csqtt-2.5.0 freeturn csqtt-2.5.3-community mrtt dnstt vaydns slipstream masterdns cottendns soar openflux; do
     case "$protocol" in
         wdtt) ;;
-        qwdtt|wdtt-plus|csqtt-2.1.9|csqtt-2.5.0|csqtt-2.5.3-community|freeturn) python3 "$SOURCE_DIR/scripts/build-protocols.py" "$protocol";;
+        qwdtt|wdtt-plus|csqtt-2.1.9|csqtt-2.5.0|csqtt-2.5.3-community|freeturn|mrtt) python3 "$SOURCE_DIR/scripts/build-protocols.py" "$protocol";;
         *) python3 "$SOURCE_DIR/scripts/build-edges.py" "$protocol";;
     esac
 done
@@ -145,7 +145,7 @@ systemctl stop wdtt wdtt-protocol-watch wdtt-fleet 2>/dev/null || true
 SAVED_PORT=$(python3 -c 'import sqlite3,pathlib; p=pathlib.Path("/etc/wdtt/panel.db"); print(sqlite3.connect(p).execute("SELECT port FROM panel_config WHERE id=1").fetchone()[0] if p.exists() else 2860)')
 export WDTT_BACKEND_PORT=$(python3 "$SOURCE_DIR/scripts/local-install.py" port "$SAVED_PORT")
 export WDTT_PUBLIC_URL="http://127.0.0.1:$WDTT_BACKEND_PORT"
-export WDTT_INITIAL_INBOUNDS=$(printf '%s\n' "${SELECTED[@]}" | python3 -c 'import sys; names=[n.strip() for n in sys.stdin]; print(",".join(n for n in names if n in ["wdtt","qwdtt","wdtt-plus","csqtt-2.1.9","csqtt-2.5.0","freeturn","csqtt-2.5.3-community"]))')
+export WDTT_INITIAL_INBOUNDS=$(printf '%s\n' "${SELECTED[@]}" | python3 -c 'import sys; names=[n.strip() for n in sys.stdin]; print(",".join(n for n in names if n in ["wdtt","qwdtt","wdtt-plus","csqtt-2.1.9","csqtt-2.5.0","freeturn","csqtt-2.5.3-community","mrtt"]))')
 export WDTT_INITIAL_PASSWORD=''
 if [[ ! -f /etc/wdtt/panel.db ]]; then
     WDTT_INITIAL_PASSWORD=$(openssl rand -hex 16)

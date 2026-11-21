@@ -55,6 +55,14 @@ jobs:
           for asset in wdtt-linux-amd64 wdtt-linux-arm64; do
             sha256sum "$asset" > "$asset.sha256"
           done
+      - name: Pack controller files
+        run: |
+          mkdir -p runtime
+          install -m 755 scripts/{protocols,edge_protocols,fleet,frontend,preflight,uninstall,panel-firewall}.py runtime/
+          git archive --format=tar.gz HEAD > runtime/node-source.tar.gz
+          tar -czf dist/wdtt-runtime.tar.gz -C runtime protocols.py edge_protocols.py fleet.py frontend.py preflight.py uninstall.py panel-firewall.py node-source.tar.gz
+          cd dist
+          sha256sum wdtt-runtime.tar.gz > wdtt-runtime.tar.gz.sha256
       - name: Fetch PWDTT Client from GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,6 +101,7 @@ jobs:
           files: |
             dist/wdtt-linux-*
             dist/wdtt-cores-linux-*
+            dist/wdtt-runtime.tar.gz*
             dist/pwdtt-client-*
           body_path: release-notes.md
           generate_release_notes: false

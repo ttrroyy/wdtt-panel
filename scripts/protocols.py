@@ -31,6 +31,7 @@ PROFILES = {
     'wdtt-plus': {'name': 'WDTT Plus', 'port': 56200, 'pool': 68, 'index': 2, 'ifaces': ['wdtt0']},
     'csqtt-2.1.9': {'name': 'CSQTT 2.1.9', 'port': 56300, 'pool': 69, 'index': 3, 'ifaces': ['csqtt1']},
     'csqtt-2.5.0': {'name': 'CSQTT 2.5.0', 'port': 56400, 'pool': 71, 'index': 4, 'ifaces': ['csqtt1']},
+    'mrtt': {'name':'MRTT 1.0','port':56800,'pool':75,'subnet':'10.75.67.0/24','max_users':248,'index':7,'ifaces':['mrtt1']},
     'freeturn': {'name': 'FreeTurn', 'port': 56500, 'pool': 72, 'index': 5, 'ifaces': ['ftwg0']},
     'csqtt-2.5.3-community': {'name':'CSQTT 2.5.3 (community)','port':56700,'pool':74,'prefix':24,'max_users':248,'index':6,'ifaces':['csqtt1']},
 }
@@ -152,11 +153,11 @@ def settings_sections(name):
             field('tag','Тег',default='vpn-'+name,readonly=True,help=fixed),
             field('listen_host','Адрес прослушивания',help='0.0.0.0 или 10.253.'+str(p['index'])+'.2'),
             field('host','Адрес в ссылке',help='IPv4 или домен без порта и пути.'),
-            number('port','UDP-порт' if name.startswith('csqtt') else 'DTLS порт',p['port'],1024,65531,help='После смены порта обновите клиентские конфиги.')]
+            number('port','UDP-порт' if name.startswith('csqtt') or name=='mrtt' else 'DTLS порт',p['port'],1024,65531,help='После смены порта обновите клиентские конфиги.')]
     if name in ('qwdtt','wdtt-plus','freeturn'):common.append(number('wg_port','WireGuard порт',p['port']+1,1024,65535))
     if name!='wdtt':common.append(number('client_port','Порт клиента',9000,1024,65535,help='Локальный порт клиента. Обновите его конфигурацию после изменения.'))
     common += [field('dns','DNS клиента',help='Один или два IPv4 через запятую; пусто — DNS сервера.'),
-               field('subnet','Подсеть',default=f'10.{p["pool"]}.0.0/{p.get("prefix",16)}',readonly=True,help=fixed)]
+               field('subnet','Подсеть',default=p.get('subnet',f'10.{p["pool"]}.0.0/{p.get("prefix",16)}'),readonly=True,help=fixed)]
     sections=[{'title':'Основное','fields':common}]
     if name=='qwdtt':
         common.append(number('mtu','MTU WireGuard',1280,1280,1280,readonly=True,help=original))
@@ -165,6 +166,8 @@ def settings_sections(name):
     elif name=='wdtt-plus':
         common.append(number('mtu','MTU',1280,1280,1280,readonly=True,help=original))
         advanced=[number('max_users','Лимит пользователей',65023,1,65023),number('max_workers_per_access','DTLS-воркеров на доступ',0,0,128,help='0 — без ограничения.'),number('max_handshakes','Одновременных handshake',32,1,256),number('handshake_rate','Handshake в секунду',24,1,1000),number('max_client_mbps','Мбит/с на доступ',0,0,1000,help='Общий серверный лимит; 0 — безлимит.'),field('wg_backend','WireGuard backend','select','userspace',options=['auto','kernel','userspace'])]
+    elif name=='mrtt':
+        advanced=[number('max_users','Лимит пользователей',248,248,248,readonly=True,help=original)]
     elif name.startswith('csqtt'):
         common.append(number('mtu','MTU TUN',1300 if name=='csqtt-2.1.9' else 1500,0,1500,readonly=True,help=original))
         advanced=[field('secure_cookie','Secure cookie','switch',False,help='Cookie служебного HTTPS API.')]
@@ -227,7 +230,7 @@ def net_up(name):
     nsrun(name,'ip','route','replace','default','via',host_ip)
     nsrun(name,'sysctl','-qw','net.ipv4.ip_forward=1','net.ipv4.conf.all.rp_filter=0','net.ipv4.conf.default.rp_filter=0')
     atomic(Path('/etc/netns')/ns/'resolv.conf','nameserver 1.1.1.1\n',0o644)
-    pools=[f'10.{p["pool"]}.0.0/16'] + (['10.73.0.0/16'] if name=='qwdtt' else [])
+    pools=[p.get('subnet',f'10.{p["pool"]}.0.0/16')] + (['10.73.0.0/16'] if name=='qwdtt' else [])
     for pool in pools:
         run('ip','route','replace',pool,'via',ns_ip,'dev',host)
         # Preserve client identity across the namespace boundary for Xray and quotas.
@@ -290,6 +293,9 @@ def serve(name):
         if not (d/'passwords.json').exists():
             atomic(d/'passwords.json',{'main_password':cfg['secret'],'dns':'1.1.1.1','max_passwords':65023,
                                      'default_ports':f'{port},{cfg["wg_port"]},{cfg["client_port"]}','public_ip':cfg['host'],'passwords':{},'devices':{}})
+    elif name=='mrtt':
+        args=[BIN/name,'--listen',f'{cfg["listen_host"]}:{port}','--web-port',str(port+2),'--config-dir',d]
+        env.update(MRTT_MAIN_PASSWORD=cfg['secret'],MRTT_PUBLIC_IP=cfg['host'])
     elif name.startswith('csqtt'):
         args=[BIN/name,'--listen',f'{cfg["listen_host"]}:{port}','--web-port',str(port+2),'--config-dir',d]
         if name=='csqtt-2.5.3-community':args+=['--instance','wdtt-community','--iface','csqtt1','--tun-addr','10.74.0.1/24','--no-nat']
@@ -310,7 +316,7 @@ def serve(name):
         args += ['--secure-cookie'] if cfg['secure_cookie'] else []
         if name=='csqtt-2.1.9':args += ['--fec',cfg['fec']]
     if name=='freeturn' and cfg['debug']:args += ['-debug']
-    if cfg.get('dns') and name!='freeturn': args += ['--dns' if name.startswith('csqtt') else '-dns',cfg['dns']]
+    if cfg.get('dns') and name!='freeturn': args += ['--dns' if name.startswith('csqtt') or name=='mrtt' else '-dns',cfg['dns']]
     child=subprocess.Popen(['ip','netns','exec',namespace(name),*[str(a) for a in args]],env=env)
     def stop(*_):
         child.terminate()
@@ -324,6 +330,16 @@ def serve(name):
 
 def request(name, path, data=None, method=None):
     p=spec(name); cfg=settings(name); host=f'10.253.{p["index"]}.2'
+    if name=='mrtt':
+        # The management API stays on loopback inside the protocol namespace.
+        options={'url':f'http://127.0.0.1:{p["port"]+2}{path}','request':method or ('POST' if data is not None else 'GET')}
+        if data is not None:
+            options.update(header='Content-Type: application/json',data=json.dumps(data,ensure_ascii=False))
+        config=''.join(f'{key} = {json.dumps(value,ensure_ascii=False)}\n' for key,value in options.items())
+        body=nsrun(name,'curl','--disable','--silent','--fail','--max-time','5','--noproxy','*','--config','-',input=config)
+        if not body:return {}
+        try:return json.loads(body)
+        except ValueError:return {'message':body}
     headers={'Host':cfg['host']}
     if name=='qwdtt':
         # Trust only this instance's generated certificate; the API is namespace-local.
@@ -410,7 +426,7 @@ def users(name):
         for row in rows:
             row['ips']=[devices[x][key] for x in (row.get('device_ids') or []) if x in devices for key in ('ip','raw_ip') if devices[x].get(key)]
         return rows
-    if name.startswith('csqtt'):
+    if name.startswith('csqtt') or name=='mrtt':
         rows=request(name,'/api/clients')
         if isinstance(rows,dict):
             rows=rows.get('clients',[])
@@ -467,6 +483,8 @@ def display_users(name):
                                                               **({'dk':row['diag_key']} if row.get('diag_key') else {})})
         elif name=='wdtt-plus':
             row['link']=f'wdtt://{cfg["host"]}:{port}:{cfg["wg_port"]}:{cfg["client_port"]}:{password}:{row.get("vk_hash","")}'
+        elif name=='mrtt':
+            if not row.get('link','').startswith('mrtt://'): raise ValueError('Сервер MRTT не вернул ссылку')
         elif name in ('csqtt-2.5.0','csqtt-2.5.3-community'):
             # Use the original server's encrypted URI, including its original hash encoding.
             if not row.get('link','').startswith('csqtt://'): raise ValueError('Сервер CSQTT не вернул ссылку')
@@ -500,7 +518,7 @@ def create_user(name, data):
     elif name=='qwdtt':
         row=request(name,'/admin/passwords',{'label':label,'days':days,'vk_hash':vk,'max_devices':int(data.get('max_devices',1)),
                                             'ports':f'{p["port"]},{cfg["wg_port"]},{cfg["client_port"]}'})
-    elif name.startswith('csqtt'):
+    elif name.startswith('csqtt') or name=='mrtt':
         payload={'name':label,'days':days,'hash':vk,'local_port':protocol_config(name)['client_port']}
         payload['dtls_port' if name=='csqtt-2.1.9' else 'peer_port']=p['port']
         row=request(name,'/api/clients',payload)
@@ -532,7 +550,7 @@ def enabled_user(name,password,enabled):
         request(name,'/admin/passwords/'+('activate' if enabled else 'deactivate'),{'password':password})
     elif name=='wdtt-plus':
         plus('activate' if enabled else 'deactivate','--password',password)
-    elif name.startswith('csqtt'):
+    elif name.startswith('csqtt') or name=='mrtt':
         current=next(x for x in users(name) if x['password']==password)
         if bool(current.get('active',True))!=enabled:
             request(name,'/api/clients/'+urllib.parse.quote(password,safe='')+'/toggle',{},'POST')
@@ -562,7 +580,7 @@ def mutate_user(name, data, delete=False):
     if delete:
         if name=='qwdtt': request(name,'/admin/passwords/delete',{'password':password})
         elif name=='wdtt-plus': plus('delete','--password',password)
-        elif name.startswith('csqtt'): request(name,'/api/clients/'+urllib.parse.quote(password,safe=''),method='DELETE')
+        elif name.startswith('csqtt') or name=='mrtt': request(name,'/api/clients/'+urllib.parse.quote(password,safe=''),method='DELETE')
         elif name=='freeturn': nsrun(name,'wg','set','ftwg0','peer',current['public_key'],'remove')
         with locked():
             s=state(); s['users'].get(name,{}).pop(password,None); save(s)
@@ -586,7 +604,7 @@ def mutate_user(name, data, delete=False):
             port=spec(name)['port']; cfg=protocol_config(name)
             plus('update-client','--password',password,'--label',label,'--vk-hash',vk,'--ports',f'{port},{cfg["wg_port"]},{cfg["client_port"]}')
             if 'days' in data: plus('set-expiry','--password',password,'--days',str(days))
-        elif name.startswith('csqtt'):
+        elif name.startswith('csqtt') or name=='mrtt':
             payload={'name':label,'hash':vk,'days':days,'local_port':protocol_config(name)['client_port']}
             payload['dtls_port' if name=='csqtt-2.1.9' else 'peer_port']=spec(name)['port']
             request(name,'/api/clients/'+urllib.parse.quote(password,safe=''),payload,'POST')
@@ -633,7 +651,7 @@ def profile_list():
     for name,p in PROFILES.items():
         if edge.is_edge(name):continue
         p=spec(name)
-        row=dict(p,id=name,tag='vpn-'+name,subnet=f'10.{p["pool"]}.0.0/{p.get("prefix",16)}',present=bool(s['profiles'].get(name)))
+        row=dict(p,id=name,tag='vpn-'+name,subnet=p.get('subnet',f'10.{p["pool"]}.0.0/{p.get("prefix",16)}'),present=bool(s['profiles'].get(name)))
         row['installed']=name=='wdtt' or (BIN/name).is_file()
         if name!='wdtt' and (directory(name)/'settings.json').exists():
             cfg=settings(name)
@@ -675,7 +693,7 @@ def profile_create(name,host):
     try:
         if name!='wdtt':
             validate_profile_ports(name,protocol_config(name,settings(name) if (directory(name)/'settings.json').exists() else {}))
-            pools=[f'10.{pool}.0.0/'+('24' if name=='csqtt-2.5.3-community' else '16') for pool in preflight.POOLS.get(name,[])]
+            pools=preflight.protocol_pools(name)
             overlaps=preflight.route_conflicts(json.loads(run('ip','-j','-4','route','show','table','all')),pools)
             if overlaps:raise ValueError('; '.join(overlaps))
             if not (BIN/name).exists():
@@ -925,7 +943,7 @@ def transparent_inbound(tag,port):
 
 def protocol_ingress(name):
     p=spec(name);iface='wdtt0' if name=='wdtt' else f'wp{p["index"]}h';port=21000+p['index']
-    rows=[(iface,f'10.{p["pool"]}.0.0/16',port)]
+    rows=[(iface,p.get('subnet',f'10.{p["pool"]}.0.0/16'),port)]
     if name=='qwdtt':rows.append((iface,'10.73.0.0/16',port))
     if name=='wdtt':rows.append(('wdtt-raw','10.70.0.0/16',port))
     return rows
@@ -1041,7 +1059,7 @@ def reconcile():
                 for row in rows:
                     if row['enabled'] and run('systemctl','is-active',edge.service(name,row['password']),check=False)!='active':errors.append(name+': сервер пользователя не запущен')
             if name!='wdtt' and not edge.is_edge(name):
-                pools=[f'10.{spec(name)["pool"]}.0.0/16']+(['10.73.0.0/16'] if name=='qwdtt' else [])
+                pools=preflight.protocol_pools(name)
                 # Upstreams insert their NAT rule during startup; keep the identity exemption first.
                 nat=nsrun(name,'iptables','-t','nat','-S','POSTROUTING')
                 first=next((line for line in nat.splitlines() if line.startswith('-A ')), '')

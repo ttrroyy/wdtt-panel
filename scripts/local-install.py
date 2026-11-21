@@ -11,7 +11,7 @@ import sys
 
 BASE=Path('/etc/wdtt')
 SELECTION=Path(os.environ.get('WDTT_SELECTION_DIR') or BASE)
-LEGACY=['wdtt','qwdtt','wdtt-plus','csqtt-2.1.9','csqtt-2.5.0','freeturn','csqtt-2.5.3-community']
+LEGACY=['wdtt','qwdtt','wdtt-plus','csqtt-2.1.9','csqtt-2.5.0','freeturn','csqtt-2.5.3-community','mrtt']
 EXTRA=['dnstt','vaydns','slipstream','masterdns','cottendns','soar','openflux']
 
 

@@ -72,7 +72,7 @@ def remove_locations(text):
 
 def stop_node():
     units = ['wdtt', 'wdtt-xray', 'wdtt-protocol-watch', 'wdtt-panel-firewall','wdtt-dns','wdtt-fleet']
-    units += ['wdtt-protocol@'+name for name in ('qwdtt','wdtt-plus','csqtt-2.1.9','csqtt-2.5.0','freeturn','csqtt-2.5.3-community')]
+    units += ['wdtt-protocol@'+name for name in ('qwdtt','wdtt-plus','csqtt-2.1.9','csqtt-2.5.0','freeturn','csqtt-2.5.3-community','mrtt')]
     edge_networks=set()
     registry=Path('/etc/wdtt/protocols/catalog.json')
     if registry.exists():

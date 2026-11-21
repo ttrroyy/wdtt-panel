@@ -14,9 +14,14 @@ import sys
 
 BASE=Path('/etc/wdtt')
 SELECTION=Path(os.environ.get('WDTT_SELECTION_DIR') or BASE)
-PUBLIC={'wdtt':[56000,56001,56003],'qwdtt':[56100,56102,56103],'wdtt-plus':[56200],'csqtt-2.1.9':[56300],'csqtt-2.5.0':[56400],'freeturn':[56500],'csqtt-2.5.3-community':[56700]}
-POOLS={'wdtt':[66,70],'qwdtt':[67,73],'wdtt-plus':[68],'csqtt-2.1.9':[69],'csqtt-2.5.0':[71],'freeturn':[72],'csqtt-2.5.3-community':[74]}
+PUBLIC={'wdtt':[56000,56001,56003],'qwdtt':[56100,56102,56103],'wdtt-plus':[56200],'csqtt-2.1.9':[56300],'csqtt-2.5.0':[56400],'mrtt':[56800],'freeturn':[56500],'csqtt-2.5.3-community':[56700]}
+POOLS={'wdtt':[66,70],'qwdtt':[67,73],'wdtt-plus':[68],'csqtt-2.1.9':[69],'csqtt-2.5.0':[71],'mrtt':[75],'freeturn':[72],'csqtt-2.5.3-community':[74]}
 DNS={'dnstt','vaydns','slipstream','masterdns','cottendns','soar'}
+
+def protocol_pools(name):
+    if name=='mrtt':return ['10.75.67.0/24']
+    prefix=24 if name=='csqtt-2.5.3-community' else 16
+    return [f'10.{pool}.0.0/{prefix}' for pool in POOLS.get(name,[])]
 
 def command(*args):
     result=subprocess.run(args,capture_output=True,text=True,timeout=30)
@@ -121,7 +126,7 @@ def main(role):
         if any(not caps&(1<<bit) for bit in (12,13,21)):errors.append('Нужны CAP_NET_ADMIN, CAP_NET_RAW и CAP_SYS_ADMIN для изолированных сетей ноды')
     if shutil.which('ss'):errors+=conflicts(listeners(),required_ports(selection) if role!='panel' else {},frontend['mode'])
     if role!='panel' and shutil.which('ip'):
-        pools=[f'10.{pool}.0.0/'+('24' if name=='csqtt-2.5.3-community' else '16') for name in selection['protocols'] for pool in POOLS.get(name,[])]+(['10.254.0.0/16'] if 'openflux' in selection['protocols'] else [])
+        pools=[pool for name in selection['protocols'] for pool in protocol_pools(name)]+(['10.254.0.0/16'] if 'openflux' in selection['protocols'] else [])
         errors+=route_conflicts(json.loads(command('ip','-j','-4','route','show','table','all')),pools)
     mode=frontend['mode']
     current=json.loads((BASE/'frontend.json').read_text()).get('mode','') if (BASE/'frontend.json').exists() else ''

@@ -40,6 +40,19 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(ValueError):p.api({'op':'create','protocol':'../../ssh'})
             command.assert_not_called()
 
+    def test_mrtt_management_stays_inside_its_namespace(self):
+        with patch.object(p,'settings',return_value={'host':'vpn.example'}), patch.object(p,'nsrun',return_value='[]') as run:
+            self.assertEqual(p.request('mrtt','/api/clients'),[])
+        args,kwargs=run.call_args
+        self.assertEqual(args[0],'mrtt')
+        self.assertIn('url = "http://127.0.0.1:56802/api/clients"',kwargs['input'])
+        self.assertEqual(p.protocol_ingress('mrtt'),[('wp7h','10.75.67.0/24',21007)])
+
+    def test_mrtt_subscription_uses_the_original_server_link(self):
+        link='mrtt://original-encrypted-payload'
+        with patch.object(p,'settings',return_value={'host':'vpn.example','secret':'owner'}), patch.object(p,'users',return_value=[{'password':'client','link':link}]):
+            self.assertEqual(p.display_users('mrtt')[0]['link'],link)
+
     def test_qwdtt_145_share_link_keeps_diagnostics_and_custom_ports(self):
         key='A'*43
         entry=dict(password='p+& word',vk_hash='first,second,third,fourth,fifth,sixth',diag_key=key,raw_port=57103,direct_port=57102)
