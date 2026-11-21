@@ -36,8 +36,33 @@ jobs:
       - name: Install as the client does
         run: |
           sudo cp install.sh /root/wdtt-install.sh
-          sudo env WDTT_PROTOCOLS='wdtt,qwdtt' WDTT_FRONTEND=local WDTT_DNS_ZONE='' WDTT_DNS_NS='' bash /root/wdtt-install.sh ${{ matrix.role }} 2>&1 | tee install.log
+          protocols=wdtt,qwdtt
+          if [ "${{ matrix.os }}/${{ matrix.role }}" = "ubuntu-24.04/combined" ]; then protocols+=,mrtt; fi
+          sudo env WDTT_PROTOCOLS="$protocols" WDTT_FRONTEND=local WDTT_DNS_ZONE='' WDTT_DNS_NS='' bash /root/wdtt-install.sh ${{ matrix.role }} 2>&1 | tee install.log
           test "${PIPESTATUS[0]}" = 0
+      - name: Test an isolated MRTT server and its subscription link
+        if: matrix.os == 'ubuntu-24.04' && matrix.role == 'combined'
+        run: |
+          sudo python3 - <<'PY'
+          import sys
+          import time
+          sys.path.insert(0,'/usr/local/lib/wdtt')
+          import protocols as panel
+          for attempt in range(12):
+              try:
+                  panel.request('mrtt','/api/clients')
+                  break
+              except (OSError, RuntimeError, ValueError):
+                  if attempt == 11: raise
+                  time.sleep(2)
+          created = panel.create_user('mrtt', {'name':'CI MRTT', 'days':0})
+          try:
+              client = next(row for row in panel.display_users('mrtt') if row['password'] == created['password'])
+              assert client['link'].startswith('mrtt://')
+              assert all(address.startswith('10.75.67.') for address in client['ips']) and client['ips']
+          finally:
+              panel.mutate_user('mrtt', {'password':created['password']}, delete=True)
+          PY
       - name: Status
         if: always()
         run: sudo bash /root/wdtt-install.sh status 2>&1 | tail -40 || true
