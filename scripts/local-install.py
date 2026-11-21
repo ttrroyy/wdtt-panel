@@ -11,8 +11,9 @@ import sys
 
 BASE=Path('/etc/wdtt')
 SELECTION=Path(os.environ.get('WDTT_SELECTION_DIR') or BASE)
-LEGACY=['wdtt','qwdtt','wdtt-plus','csqtt-2.1.9','csqtt-2.5.0','freeturn','csqtt-2.5.3-community','mrtt']
+LEGACY=['wdtt','qwdtt','wdtt-plus','csqtt-2.1.9','csqtt-2.5.0','freeturn','csqtt-2.5.3-community']
 EXTRA=['dnstt','vaydns','slipstream','masterdns','cottendns','soar','openflux']
+PROTOCOLS=LEGACY+EXTRA+['mrtt']
 
 
 def free_port(start=2860):
@@ -25,11 +26,11 @@ def free_port(start=2860):
 
 def select_protocols(value):
     names=[v.strip().lower() for v in value.replace(' ', ',').split(',') if v.strip()]
-    if names==['all']:return LEGACY+EXTRA
+    if names==['all']:return PROTOCOLS
     result=[]
     for name in names:
-        if name.isdigit() and 1<=int(name)<=len(LEGACY+EXTRA):name=(LEGACY+EXTRA)[int(name)-1]
-        if name not in LEGACY+EXTRA:raise ValueError('Неизвестный протокол: '+name)
+        if name.isdigit() and 1<=int(name)<=len(PROTOCOLS):name=PROTOCOLS[int(name)-1]
+        if name not in PROTOCOLS:raise ValueError('Неизвестный протокол: '+name)
         if name not in result:result.append(name)
     return result
 
@@ -49,7 +50,7 @@ def choose():
     previous=json.loads(settings.read_text()) if settings.exists() else {}
     choice=os.environ.get('WDTT_PROTOCOLS')
     if choice is None:
-        for i,name in enumerate(LEGACY+EXTRA,1):print(str(i)+') '+name,file=sys.stderr)
+        for i,name in enumerate(PROTOCOLS,1):print(str(i)+') '+name,file=sys.stderr)
         choice=ask('Протоколы: номера или имена через запятую; all — все',','.join(previous.get('protocols',LEGACY)))
     selected=select_protocols(choice)
     zone=os.environ.get('WDTT_DNS_ZONE',previous.get('dns_zone',''))
@@ -96,7 +97,7 @@ def configure():
     selected=json.loads((BASE/'install-selection.json').read_text());runtime=runpy.run_path(str(Path(__file__).with_name('protocols.py')))
     created=[]
     for engine in selected['protocols']:
-        if engine in LEGACY:
+        if engine in LEGACY or engine=='mrtt':
             if not runtime['state']()['profiles'].get(engine):runtime['profile_create'](engine,os.environ['WDTT_PUBLIC_IP']);created.append(engine)
         elif engine=='openflux' or selected['dns_zone']:
             found=any(p['engine']==engine for n,p in runtime['edge'].catalog(runtime['ROOT']).items() if runtime['state']()['profiles'].get(n))

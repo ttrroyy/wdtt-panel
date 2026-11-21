@@ -61,6 +61,7 @@ class EdgeTests(unittest.TestCase):
     def test_installer_choices_and_busy_internal_port(self):
         installer=load_installer()
         self.assertEqual(installer.select_protocols('1, 8, dnSTT'),['wdtt','dnstt'])
+        self.assertEqual(installer.select_protocols('15, mrtt'),['mrtt'])
         self.assertIn('soar',installer.select_protocols('all'))
         with self.assertRaises(ValueError):installer.select_protocols('http')
         with socket.socket() as sock:
