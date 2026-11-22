@@ -47,6 +47,20 @@ class FleetTests(unittest.TestCase):
             snapshot['machine_id']='another'
             with self.assertRaises(ValueError):fleet.verified_snapshot(node)
 
+    def test_inventory_reports_stale_nodes_without_changing_pairing_status(self):
+        node=dict(id='n-one',status='ready',api_url='https://node.example',api_key='secret')
+        snapshot=dict(controller_seen_at=100)
+        self.assertEqual(fleet.node_inventory(node,{},100)['connection_status'],'pending')
+        self.assertEqual(fleet.node_inventory(node,snapshot,160)['connection_status'],'online')
+        stale=fleet.node_inventory(node,snapshot,161)
+        self.assertEqual(stale['connection_status'],'stale')
+        self.assertEqual(stale['status'],'ready')
+        self.assertEqual(stale['transport'],'api')
+        self.assertNotIn('api_key',stale)
+        self.assertEqual(fleet.node_inventory(dict(node,error='timeout'),snapshot,160)['connection_status'],'unavailable')
+        local=fleet.node_inventory(dict(id='local',status='ready'),{},161)
+        self.assertEqual((local['connection_status'],local['transport']),('online','local'))
+
     def test_loopback_and_plain_http_api_urls_are_rejected_before_connecting(self):
         with patch.object(fleet,'remote') as remote:
             for url in ('http://node.example','https://user:pass@node.example','https://node.example/path','https://node.example?token=abc'):

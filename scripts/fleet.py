@@ -241,6 +241,23 @@ def add_api_node(payload):
 
 def public_node(node):return {k:v for k,v in node.items() if k not in ('server_key','client_key','api_key')}
 
+def node_inventory(node,snapshot,now):
+    last_seen_at=snapshot.get('controller_seen_at',0)
+    if node['id']=='local':
+        connection='online'
+    elif node['status']!='ready':
+        connection='pending'
+    elif node.get('error'):
+        connection='unavailable'
+    elif not last_seen_at:
+        connection='pending'
+    elif now-last_seen_at>60:
+        connection='stale'
+    else:
+        connection='online'
+    transport='local' if node['id']=='local' else 'api' if node.get('api_url') else 'ssh'
+    return dict(public_node(node),last_seen_at=last_seen_at,connection_status=connection,transport=transport)
+
 
 def adopt_users(node,snapshot):
     registry=read(ROOT/'inbounds.json',{})
@@ -281,7 +298,8 @@ def api(payload):
             profiles=local_api({'op':'list'}) if n['id']=='local' else snapshots.get(n['id'],{}).get('profiles',[])
             for p in profiles:
                 if p.get('present'):sources.append(dict(node_id=n['id'],tag='vpn-'+p['id'],label=n['name']+' · '+p['name']))
-        return dict(nodes=[dict(public_node(n),last_seen_at=snapshots.get(n['id'],{}).get('controller_seen_at',0)) for n in s['nodes']],role=role(),sources=sources)
+        now=int(time.time())
+        return dict(nodes=[node_inventory(n,snapshots.get(n['id'],{}),now) for n in s['nodes']],role=role(),sources=sources)
     node=next((n for n in s['nodes'] if n['id']==payload.get('node_id')),None)
     if not node:raise ValueError('Нода не найдена')
     if op in ('inbound','inbound-save'):return remote(node,dict(op=op,request=payload.get('request',{})))

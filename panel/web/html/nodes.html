@@ -9,8 +9,8 @@
    <a-button type="primary" icon="plus" @click="visible=true" style="margin-bottom:16px">Добавить ноду</a-button>
    <div v-if="!nodes.length" class="fleet-empty">Подключите VPS, которая будет обслуживать инбаунды и пользователей.</div>
    <div class="fleet-list"><div v-for="node in nodes" :key="node.id" class="fleet-row">
-    <div class="fleet-row-main"><strong>[[ node.name ]]</strong><div class="fleet-muted">[[ node.address ]]<span v-if="node.id!=='local'"> · SSH [[ node.ssh_port ]]</span></div><div class="fleet-muted" v-if="node.fingerprint">[[ node.fingerprint ]]</div><div v-if="node.last_seen_at" class="fleet-muted">Последний ответ [[ new Date(node.last_seen_at*1000).toLocaleString() ]]</div><div v-if="node.error" role="alert" style="color:var(--danger-color);overflow-wrap:anywhere">[[ node.error ]]</div></div>
-    <div class="fleet-actions"><a-tag>[[ node.status==='ready'?(node.error?'Недоступна':'Подключена'):node.status==='installing'?'Устанавливается':'Подключение' ]]</a-tag><a-button v-if="node.status==='ready'" icon="api" @click="openNode(node)">Инбаунды</a-button><a-popconfirm v-if="node.id!=='local'" title="Отвязать ноду? Её службы продолжат работать на VPS." ok-text="Отвязать" cancel-text="Отмена" @confirm="remove(node)"><a-button icon="disconnect" aria-label="Отвязать ноду"></a-button></a-popconfirm></div>
+    <div class="fleet-row-main"><strong>[[ node.name ]]</strong><div class="fleet-muted">[[ node.address ]]<span v-if="node.transport==='ssh'"> · SSH [[ node.ssh_port ]]</span><span v-else-if="node.transport==='api'"> · HTTPS API</span></div><div class="fleet-muted" v-if="node.fingerprint">[[ node.fingerprint ]]</div><div v-if="node.last_seen_at" class="fleet-muted">Последний ответ [[ new Date(node.last_seen_at*1000).toLocaleString() ]]</div><div v-if="node.error" role="alert" style="color:var(--danger-color);overflow-wrap:anywhere">[[ node.error ]]</div></div>
+    <div class="fleet-actions"><a-tag>[[ nodeStatus(node) ]]</a-tag><a-button v-if="node.status==='ready'" icon="api" @click="openNode(node)">Инбаунды</a-button><a-popconfirm v-if="node.id!=='local'" title="Отвязать ноду? Её службы продолжат работать на VPS." ok-text="Отвязать" cancel-text="Отмена" @confirm="remove(node)"><a-button icon="disconnect" aria-label="Отвязать ноду"></a-button></a-popconfirm></div>
    </div></div>
   </a-card>
   <a-modal :class="themeSwitcher.currentTheme+' fleet-modal'" v-model="visible" title="Добавить ноду" :confirm-loading="saving" @ok="save" ok-text="Подключить" cancel-text="Закрыть">
@@ -39,6 +39,10 @@
 {{ template "component/fleet" .}}
 <script>
 const app=new Vue({el:'#app',delimiters:['[[',']]'],data:{themeSwitcher,nodes:[],loading:false,saving:false,error:'',visible:false,form:{name:'',transport:'ssh',address:'',ssh_port:22,password:'',deploy:true,api_url:'',api_key:''},timer:null},methods:{
+ nodeStatus(node){
+  const labels={online:'Подключена',stale:'Давно нет ответа',unavailable:'Недоступна'};
+  return labels[node.connection_status] || (node.status==='installing'?'Устанавливается':'Ожидает ответа');
+ },
  async load(){this.loading=true;this.error='';try{const data=await fleetRequest('nodes');this.nodes=data.nodes}catch(e){this.error=e.message}finally{this.loading=false}},
  async save(){this.saving=true;try{await fleetRequest('nodes',{op:'add',...this.form});this.visible=false;this.$message.success(this.form.deploy?'Установка ноды запущена':'Нода подключена');await this.load()}catch(e){this.$message.error(e.message)}finally{this.form.password='';this.form.api_key='';this.saving=false}},
  async remove(node){try{await fleetRequest('nodes',{op:'delete',node_id:node.id});await this.load()}catch(e){this.$message.error(e.message)}},
