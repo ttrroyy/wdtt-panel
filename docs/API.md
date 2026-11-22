@@ -39,7 +39,7 @@ curl "$BASE/panel/api/users" -H "Authorization: Bearer $API_KEY"
 {"op":"create","engine":"dnstt","zone":"t.example.org","ns":"ns.example.org"}
 ```
 
-Типы VPN: `wdtt`, `qwdtt`, `wdtt-plus`, `csqtt-2.1.9`, `csqtt-2.5.0`, `csqtt-2.5.3-community`, `freeturn`.
+Типы VPN: `wdtt`, `qwdtt`, `wdtt-plus`, `csqtt-2.1.9`, `csqtt-2.5.0`, `csqtt-2.5.3-community`, `freeturn`, `mrtt`.
 
 Движки: `dnstt`, `vaydns`, `slipstream`, `masterdns`, `cottendns`, `soar`, `openflux`. OpenFlux не требует `zone` и `ns`. Ответ создания содержит `id` экземпляра.
 
@@ -80,7 +80,7 @@ ID удалённого инбаунда: `<node_id>--<local_id>`. Исполь�
 
 ## Подписки и маршруты
 
-`GET <случайный путь подписок>/<sub_id>` не требует сессии. Ссылка возвращается в `sub_url`; в публичном режиме она использует HTTPS на 443. `?format=raw` выдаёт подписку для клиента, `?html=1` открывает страницу конфигов.
+`GET <случайный путь подписок>/<sub_id>` не требует сессии. Ссылка возвращается в `sub_url`; в публичном режиме она использует HTTPS на 443. `?format=raw` выдаёт ссылки строками, `?format=base64` кодирует тот же список в Base64, `?html=1` открывает страницу конфигов. Без явного формата выдача для клиента использует настройку панели.
 
 | Метод | Путь | Действие |
 |---|---|---|
@@ -117,6 +117,8 @@ ID удалённого инбаунда: `<node_id>--<local_id>`. Исполь�
 | POST | `/panel/api/api-keys` | Отзыв: `op:delete`, `id` |
 | GET | `/panel/api/status` | Состояние сервисов |
 | GET | `/panel/api/logs` | Журнал |
+| GET | `/panel/api/server/getPanelVersion` | Доступные релизы панели с пакетами обновления |
+| POST | `/panel/api/server/installPanel/<tag>` | Установить релиз панели, например `v1.6.0` |
 | POST | `/panel/api/server/restartWdttService` | Перезапустить WDTT |
 | POST | `/panel/api/server/restartXrayService` | Перезапустить Xray |
 
