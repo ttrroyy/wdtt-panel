@@ -35,3 +35,19 @@ func TestSubscriptionWantsHTML(t *testing.T) {
 		})
 	}
 }
+
+func TestSubscriptionUsesBase64(t *testing.T) {
+	for _, tc := range []struct {
+		format           string
+		configured, want bool
+	}{
+		{"raw", true, false},
+		{"BASE64", false, true},
+		{"sub", true, true},
+		{"", false, false},
+	} {
+		if got := subscriptionUsesBase64(tc.format, tc.configured); got != tc.want {
+			t.Errorf("format %q, configured %t: got %t, want %t", tc.format, tc.configured, got, tc.want)
+		}
+	}
+}

@@ -171,6 +171,17 @@ func subscriptionWantsHTML(r *http.Request) bool {
 		strings.Contains(ua, "chrome") || strings.Contains(ua, "edg/")
 }
 
+func subscriptionUsesBase64(format string, configured bool) bool {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "raw":
+		return false
+	case "base64":
+		return true
+	default:
+		return configured
+	}
+}
+
 func startSubscriptionServer(app *App) {
 	app.startSubscriptionServer()
 }
@@ -336,7 +347,7 @@ func (a *App) handleSubscription(w http.ResponseWriter, r *http.Request) {
 	a.applySubHeaders(w, header)
 
 	body := strings.Join(bundleLinks, "\n")
-	if a.cfg.SubEncrypt {
+	if subscriptionUsesBase64(r.URL.Query().Get("format"), a.cfg.SubEncrypt) {
 		body = base64.StdEncoding.EncodeToString([]byte(body))
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
