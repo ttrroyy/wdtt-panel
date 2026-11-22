@@ -1,6 +1,6 @@
 # GitHub Release (CI)
 
-При теге `v*` workflow `.github/workflows/build-server.yml` собирает `wdtt-linux-amd64` / `arm64` и скачивает **PWDTT Client** из [релиза pwdtt-client](https://github.com/ildarmaga/pwdtt-client/releases) (версия в `release-assets/pwdtt-client-version`). Бинарники клиента в репозитории wdtt больше не хранятся.
+При теге `v*` workflow `.github/workflows/build-server.yml` собирает серверную панель и выпускает пакеты для установки на VPS и обновления из панели. Мастера деплоя Rawline запускают серверный `install.sh`.
 
 ## Файлы в релизе
 
@@ -8,30 +8,9 @@
 |------|------------|
 | `wdtt-linux-amd64` | Сервер + панель (VPS) |
 | `wdtt-linux-arm64` | Сервер + панель (ARM) |
-| `pwdtt-client-linux-amd64` | Клиент PWDTT для пользователей (Linux) |
-| `pwdtt-client-windows-amd64.exe` | Клиент PWDTT для пользователей (Windows) |
+| `wdtt-cores-linux-x86_64.tar.gz` | Ядра протоколов для x86-64 |
+| `wdtt-cores-linux-aarch64.tar.gz` | Ядра протоколов для ARM64 |
+| `wdtt-runtime.tar.gz` | Файлы управления панелью и нодами |
+| `*.sha256` | Контрольные суммы серверных файлов и архивов |
 
-Описание релиза дополняется блоком из `docs/RELEASE_CLIENT.md`.
-
-## Обновление клиента перед релизом WDTT
-
-1. В **pwdtt-client** — коммит, тег и push (сборка на GitHub Actions, сервер не нужен):
-
-```bash
-cd pwdtt-client
-git tag vX.Y.Z
-git push origin vX.Y.Z
-# дождаться зелёного Build Desktop в Actions
-```
-
-2. В **wdtt** — указать версию клиента и выпустить сервер:
-
-```bash
-echo vX.Y.Z > release-assets/pwdtt-client-version
-git add release-assets/pwdtt-client-version CHANGELOG.md
-git tag vA.B.C && git push origin vA.B.C
-```
-
-CI wdtt скачает `wdtt-linux-amd64` и `wdtt-windows-amd64.exe` из релиза pwdtt-client.
-
-Опционально локально (для проверки): `./scripts/fetch-pwdtt-client.sh release-assets`
+Описание релиза берётся из секции соответствующей версии в `CHANGELOG.md`.

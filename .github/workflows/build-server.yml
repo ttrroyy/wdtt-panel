@@ -104,20 +104,6 @@ jobs:
           tar -czf dist/wdtt-runtime.tar.gz -C runtime protocols.py edge_protocols.py fleet.py frontend.py preflight.py uninstall.py panel-firewall.py node-source.tar.gz
           cd dist
           sha256sum wdtt-runtime.tar.gz > wdtt-runtime.tar.gz.sha256
-      - name: Fetch PWDTT Client from GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          CLIENT_TAG="$(tr -d '[:space:]' < release-assets/pwdtt-client-version)"
-          test -n "$CLIENT_TAG"
-          mkdir -p dist/client-dl
-          gh release download "$CLIENT_TAG" --repo ildarmaga/pwdtt-client \
-            -D dist/client-dl -p wdtt-linux-amd64 -p wdtt-windows-amd64.exe
-          mv dist/client-dl/wdtt-linux-amd64 dist/pwdtt-client-linux-amd64
-          mv dist/client-dl/wdtt-windows-amd64.exe dist/pwdtt-client-windows-amd64.exe
-          chmod +x dist/pwdtt-client-linux-amd64
-          echo "PWDTT_CLIENT_TAG=${CLIENT_TAG}" >> "$GITHUB_ENV"
       - name: Release notes from CHANGELOG
         id: notes
         run: |
@@ -132,9 +118,6 @@ jobs:
             echo "Нет секции ## [${TAG}] в CHANGELOG.md — добавьте перед тегом." > release-notes.md
             echo "Compare: https://github.com/${{ github.repository }}/compare/${{ github.event.repository.default_branch }}...${{ github.ref_name }}" >> release-notes.md
           fi
-          echo "" >> release-notes.md
-          echo "Версия PWDTT Client в этом релизе: **${PWDTT_CLIENT_TAG}**" >> release-notes.md
-          cat docs/RELEASE_CLIENT.md >> release-notes.md
           echo "---notes---"
           cat release-notes.md
       - uses: softprops/action-gh-release@v2
@@ -143,6 +126,5 @@ jobs:
             dist/wdtt-linux-*
             dist/wdtt-cores-linux-*
             dist/wdtt-runtime.tar.gz*
-            dist/pwdtt-client-*
           body_path: release-notes.md
           generate_release_notes: false
