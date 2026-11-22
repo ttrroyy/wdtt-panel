@@ -53,6 +53,14 @@ class ProtocolTests(unittest.TestCase):
         with patch.object(p,'settings',return_value={'host':'vpn.example','secret':'owner'}), patch.object(p,'users',return_value=[{'password':'client','link':link}]):
             self.assertEqual(p.display_users('mrtt')[0]['link'],link)
 
+    def test_mrtt_preserves_device_limits_and_addresses(self):
+        clients=[{'password':'client','ip':'10.75.67.3','devices':[{'ip':'10.75.67.4'},{'ip':'10.75.67.3'}]}]
+        with patch.object(p,'request',return_value=clients):
+            self.assertEqual(p.users('mrtt')[0]['ips'],['10.75.67.3','10.75.67.4'])
+        with patch.object(p,'request',return_value={'password':'client'}) as request, patch.object(p,'save'):
+            p.create_user('mrtt',{'name':'Device quota','max_devices':2})
+            self.assertEqual(request.call_args.args[2]['max_devices'],2)
+
     def test_qwdtt_145_share_link_keeps_diagnostics_and_custom_ports(self):
         key='A'*43
         entry=dict(password='p+& word',vk_hash='first,second,third,fourth,fifth,sixth',diag_key=key,raw_port=57103,direct_port=57102)

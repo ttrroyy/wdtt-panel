@@ -432,6 +432,8 @@ def users(name):
             rows=rows.get('clients',[])
         for row in rows:
             row['ips']=[row['ip']] if row.get('ip') else []
+            if name=='mrtt':
+                row['ips']=list(dict.fromkeys(row['ips']+[device['ip'] for device in row.get('devices',[]) if device.get('ip')]))
             row['down_bytes']=row.get('down',0); row['up_bytes']=row.get('up',0)
             row['expires_at']=row.get('expires',0)
         return rows
@@ -521,6 +523,7 @@ def create_user(name, data):
     elif name.startswith('csqtt') or name=='mrtt':
         payload={'name':label,'days':days,'hash':vk,'local_port':protocol_config(name)['client_port']}
         payload['dtls_port' if name=='csqtt-2.1.9' else 'peer_port']=p['port']
+        if name=='mrtt' and 'max_devices' in data:payload['max_devices']=int(data['max_devices'])
         row=request(name,'/api/clients',payload)
     else:
         private=run('wg','genkey'); public=run('wg','pubkey',input=private+'\n')
@@ -589,7 +592,7 @@ def mutate_user(name, data, delete=False):
     total=int(data.get('total_bytes',current['total_bytes'])); speed=float(data.get('max_mbps',current['max_mbps']))
     if total<0 or speed<0 or speed>100000:
         raise ValueError('Лимиты должны быть неотрицательными; 0 — безлимит')
-    if 'name' in data or 'days' in data or 'vk_hash' in data:
+    if 'name' in data or 'days' in data or 'vk_hash' in data or (name=='mrtt' and 'max_devices' in data):
         label=str(data.get('name',current['name'])).strip()
         vk=str(data.get('vk_hash',current.get('vk_hashes') or current.get('vk_hash',''))).strip()
         days=int(data.get('days',max(1,int((current.get('expires_at',0)-time.time())/86400)+1) if current.get('expires_at',0) else 0))
@@ -607,6 +610,7 @@ def mutate_user(name, data, delete=False):
         elif name.startswith('csqtt') or name=='mrtt':
             payload={'name':label,'hash':vk,'days':days,'local_port':protocol_config(name)['client_port']}
             payload['dtls_port' if name=='csqtt-2.1.9' else 'peer_port']=spec(name)['port']
+            if name=='mrtt' and 'max_devices' in data:payload['max_devices']=int(data['max_devices'])
             request(name,'/api/clients/'+urllib.parse.quote(password,safe=''),payload,'POST')
         elif name=='freeturn':
             with locked():
